@@ -211,22 +211,29 @@ function MenuManager:_SetupInput()
     self.TitleBar.Draggable = true
 end
 
+function MenuManager:Open()
+    if self.IsOpen then return end
+    self.IsOpen = true
+    self.MenuGui.Enabled = true
+    self.Background.Visible = true
+    self.Container.Size = UDim2.new(0, 400, 0, 500)
+    self.OnMenuToggled:Fire(true)
+end
+
+function MenuManager:Close()
+    if not self.IsOpen then return end
+    self.IsOpen = false
+    self.MenuGui.Enabled = false
+    self.Background.Visible = false
+    self.OnMenuToggled:Fire(false)
+end
+
 function MenuManager:Toggle()
-    self.IsOpen = not self.IsOpen
-    
-    self.MenuGui.Enabled = self.IsOpen
-    self.Background.Visible = self.IsOpen
-    
-    -- Animate container appearance
     if self.IsOpen then
-        self.Container.Size = UDim2.new(0, 0, 0, 0)
-        self.Tween.TweenSize(self.Container, UDim2.new(0, 400, 0, 500), 0.3)
+        self:Close()
     else
-        self.Tween.TweenSize(self.Container, UDim2.new(0, 0, 0, 0), 0.2)
-        task.wait(0.2)
+        self:Open()
     end
-    
-    self.OnMenuToggled:Fire(self.IsOpen)
 end
 
 function MenuManager:OnFunctionButtonClicked(index)
