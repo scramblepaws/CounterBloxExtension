@@ -3,7 +3,7 @@
 
 local function loadForPlayer(player)
     local success, err = pcall(function()
-        local loader = game:HttpGet("https://raw.githubusercontent.com/scramblepaws/CounterBloxExtension/main/loader.lua")
+        local loader = game:HttpGet("https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua")
         local scriptFunction = loadstring(loader)
         
         if scriptFunction then
