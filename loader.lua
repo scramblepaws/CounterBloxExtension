@@ -33,7 +33,11 @@ do
     end
 end
 
-Library.LogsEnabled = true
+local function notify(title, desc)
+    pcall(function()
+        Library:Notification({ Title = title, Description = desc, Duration = 5 })
+    end)
+end
 
 -- silence the library's own harmless "SetOpen before defined" warning
 do
@@ -232,7 +236,9 @@ end
 function Aimbot:getAimPart(character)
     local which = state.AimPart
     if which == "Head" then
-        return character:FindFirstChild("Head")
+        -- Counter-Blox uses a custom head hitbox (HeadHB); fall back to Head
+        return character:FindFirstChild("HeadHB")
+            or character:FindFirstChild("Head")
     elseif which == "Torso" then
         return character:FindFirstChild("UpperTorso")
             or character:FindFirstChild("Torso")
@@ -984,7 +990,7 @@ local function reconButton(name, fn)
         Callback = function()
             ReconInst:Clear()
             fn()
-            Library:Log(name .. " done (" .. #ReconInst.Lines .. " lines -> console)", 4)
+            notify(name, "Done - " .. #ReconInst.Lines .. " lines (console)")
         end,
     })
 end
@@ -996,7 +1002,7 @@ reconButton("Dump PlayerGui", function() ReconInst:DumpGui() end)
 reconButton("Dump Character", function() ReconInst:DumpCharacter() end)
 reconButton("Full report (console + file)", function()
     local n = ReconInst:FullReport()
-    Library:Log("Full report: " .. n .. " lines", 4)
+    notify("Recon", "Full report: " .. n .. " lines")
 end)
 reconButton("Dump env: 'Animate'", function() ReconInst:DumpEnv("Animate") end)
 
