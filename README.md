@@ -1,61 +1,33 @@
 # Counter-Blox Extension
 
-A Roblox script extension for **Counter-Blox** that adds a custom menu system, key/mouse binding, movement features (Bunnyhop, TextureBug), and Box ESP visuals.
+A single-file Roblox script for **Counter-Blox** adding a menu, ESP, bunnyhop, and texture-bug slide.
 
-## Installation
-
-Load the script using a loadstring function:
+## Load
 
 ```lua
 loadstring(game:HttpGet("https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"))()
 ```
-
-## Features
-
-### Menu System
-- Open/close with `F4`
-- Custom draggable menu
-- Bind functions to keys (1-5) and mouse buttons (Mouse1-5)
-
-### Movement
-- **Bunnyhop** - Double-jump physics with adjustable force
-- **TextureBug** - Slide against pixels for a "glitch" movement effect
-
-### Visual
-- **Box ESP** - See-through boxes showing player positions and health
-- Custom cursor during menu interaction
 
 ## Controls
 
 | Key | Action |
 |-----|--------|
 | `F4` | Open/close menu |
-| `B` | Toggle Bunnyhop |
-| `T` | Toggle TextureBug |
-| `E` | Toggle ESP |
-| `Shift` | Slide (when TextureBug enabled) |
+| `B`  | Toggle bunnyhop |
+| `T`  | Toggle texture bug (slide) |
+| `E`  | Toggle ESP |
 
-## File Structure
+## Features
 
-```
-counter-blox-extension/
-├── loader.lua              # Entry point (loadstring)
-├── main.client.lua         # LocalScript entry
-├── modules/
-│   ├── MenuManager.lua     # Menu UI + toggle
-│   ├── InputHandler.lua    # Key/mouse binding
-│   ├── MovementEngine.lua  # Bunnyhop + TextureBug
-│   ├── VisualRenderer.lua  # Box ESP + visuals
-│   ├── CameraControl.lua   # Camera lock + cursor
-│   └── Utils/
-│       ├── Signal.lua      # Event system
-│       └── Tween.lua       # Animation helpers
-├── config/
-│   └── settings.json       # User settings
-└── scripts/
-    └── loader.server.lua   # Server-side loader
-```
+- **ESP** — box + name + health bar around every player (uses the `Drawing` library, standard across executors).
+- **Bunnyhop** — auto-jump on landing with a forward momentum boost.
+- **Texture bug** — lowers friction so you slide against surfaces.
+- **Menu** — draggable, top-priority overlay with `[ON]/[OFF]` toggle buttons.
+
+## Structure
+
+Single self-contained `loader.lua`. No build step, no module fetches — just `loadstring` the one file.
 
 ## Disclaimer
 
-This script is for educational purposes only. Use responsibly and respect the game's terms of service.
+For educational purposes only.
