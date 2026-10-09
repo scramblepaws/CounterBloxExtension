@@ -70,13 +70,50 @@ local function notify(text, color)
 end
 
 -- ====================== ESP ======================
+-- vendored/adapted from tulontop/esp-lib.lua (bounding-box projection)
 local ESP = {}
 ESP.__index = ESP
+
+local function getBoundingBox(character)
+    local min = Vector2.new(math.huge, math.huge)
+    local max = Vector2.new(-math.huge, -math.huge)
+    local onscreen = false
+    local camera = workspace.CurrentCamera
+    if not camera then return min, max, false end
+
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            local size = part.Size / 2
+            local cf = part.CFrame
+            local corners = {
+                Vector3.new( size.X,  size.Y,  size.Z),
+                Vector3.new(-size.X,  size.Y,  size.Z),
+                Vector3.new( size.X, -size.Y,  size.Z),
+                Vector3.new(-size.X, -size.Y,  size.Z),
+                Vector3.new( size.X,  size.Y, -size.Z),
+                Vector3.new(-size.X,  size.Y, -size.Z),
+                Vector3.new( size.X, -size.Y, -size.Z),
+                Vector3.new(-size.X, -size.Y, -size.Z),
+            }
+            for _, offset in ipairs(corners) do
+                local pos, visible = camera:WorldToViewportPoint(cf:PointToWorldSpace(offset))
+                if visible then
+                    local v2 = Vector2.new(pos.X, pos.Y)
+                    min = min:Min(v2)
+                    max = max:Max(v2)
+                    onscreen = true
+                end
+            end
+        end
+    end
+
+    return min, max, onscreen
+end
 
 function ESP.new()
     local self = setmetatable({}, ESP)
     self.Enabled = false
-    self.Objects = {}   -- name -> { Box, Name, Health }
+    self.Targets = {}   -- player -> { character, objects }
     self.Connection = nil
     return self
 end
@@ -105,107 +142,134 @@ function ESP:Stop()
     self:Clear()
 end
 
-function ESP:GetObjects(player)
-    if self.Objects[player.Name] then
-        return self.Objects[player.Name]
-    end
-
+-- create Drawing objects for a character
+function ESP:AddCharacter(character)
     local objects = {}
-
     if hasDrawing then
         objects.Box = Drawing.new("Square")
-        objects.Box.Thickness = 1.5
+        objects.Box.Thickness = 1
         objects.Box.Filled = false
-        objects.Box.Visible = false
         objects.Box.Transparency = 1
+        objects.Box.Visible = false
         objects.Box.Color = config.EspBoxColor
-        objects.Box.ZIndex = 1
 
         objects.Name = Drawing.new("Text")
         objects.Name.Font = Drawing.Fonts.UI
         objects.Name.Size = 13
         objects.Name.Center = true
         objects.Name.Outline = true
-        objects.Name.Visible = false
         objects.Name.Transparency = 1
+        objects.Name.Visible = false
         objects.Name.Color = Color3.new(1, 1, 1)
-        objects.Name.ZIndex = 1
+
+        objects.HealthBg = Drawing.new("Square")
+        objects.HealthBg.Thickness = 1
+        objects.HealthBg.Filled = true
+        objects.HealthBg.Transparency = 1
+        objects.HealthBg.Visible = false
+        objects.HealthBg.Color = Color3.new(0, 0, 0)
 
         objects.Health = Drawing.new("Square")
         objects.Health.Filled = true
-        objects.Health.Visible = false
         objects.Health.Transparency = 1
+        objects.Health.Visible = false
         objects.Health.Color = Color3.new(0, 1, 0)
-        objects.Health.ZIndex = 1
     end
-
-    self.Objects[player.Name] = objects
     return objects
 end
 
+function ESP:RemoveObjects(objects)
+    for _, drawing in pairs(objects) do
+        pcall(function() drawing:Remove() end)
+    end
+end
+
 function ESP:Render()
+    if not hasDrawing then return end
     local camera = workspace.CurrentCamera
     if not camera then return end
+
+    -- drop dead/left players
+    for player, target in pairs(self.Targets) do
+        if not player.Parent then
+            self:RemoveObjects(target.objects)
+            self.Targets[player] = nil
+        end
+    end
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
 
         local character = player.Character
-        if not character then continue end
+        if not character or not character.Parent then continue end
 
         local humanoid = character:FindFirstChildOfClass("Humanoid")
-        local root = character:FindFirstChild("HumanoidRootPart")
-        local head = character:FindFirstChild("Head")
-        if not (humanoid and root and head) or humanoid.Health <= 0 then continue end
 
-        local topPos = head.Position + Vector3.new(0, 1.3, 0)
-        local bottomPos = root.Position - Vector3.new(0, 3.1, 0)
+        -- death check: hide and skip if dead
+        if not humanoid or humanoid.Health <= 0 then
+            local target = self.Targets[player]
+            if target then
+                self:RemoveObjects(target.objects)
+                self.Targets[player] = nil
+            end
+            continue
+        end
 
-        local top, topVisible = camera:WorldToScreenPoint(topPos)
-        local bottom, bottomVisible = camera:WorldToScreenPoint(bottomPos)
+        local target = self.Targets[player]
 
-        local objects = self:GetObjects(player)
-        if not hasDrawing then continue end
+        -- respawn check: character changed
+        if not target or target.character ~= character then
+            if target then
+                self:RemoveObjects(target.objects)
+            end
+            target = {
+                character = character,
+                objects = self:AddCharacter(character),
+            }
+            self.Targets[player] = target
+        end
 
-        if topVisible and bottomVisible then
-            local height = math.abs(bottom.Y - top.Y)
-            local width = height * 0.45
-            local x = top.X - width / 2
-            local y = top.Y
+        local min, max, onscreen = getBoundingBox(character)
+        local objects = target.objects
 
+        if onscreen then
+            local width = max.X - min.X
+            local height = max.Y - min.Y
             local health = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
 
-            objects.Box.Visible = true
-            objects.Box.Position = Vector2.new(x, y)
+            objects.Box.Position = min
             objects.Box.Size = Vector2.new(width, height)
-            objects.Box.Color = health > 0.6 and config.EspBoxColor or config.EspEnemyColor
+            objects.Box.Visible = true
 
-            objects.Name.Visible = true
             objects.Name.Text = player.Name
-            objects.Name.Position = Vector2.new(top.X, y - 15)
-            objects.Name.Color = Color3.new(1, 1, 1)
+            objects.Name.Position = Vector2.new((min.X + max.X) / 2, min.Y - 15)
+            objects.Name.Visible = true
 
-            objects.Health.Visible = true
-            objects.Health.Position = Vector2.new(x - 6, y)
-            objects.Health.Size = Vector2.new(2, height * health)
+            local barX = min.X - 5
+            objects.HealthBg.Position = Vector2.new(barX, min.Y)
+            objects.HealthBg.Size = Vector2.new(3, height)
+            objects.HealthBg.Visible = true
+
+            objects.Health.Position = Vector2.new(barX, min.Y + height * (1 - health))
+            objects.Health.Size = Vector2.new(3, height * health)
             objects.Health.Color = (health > 0.6 and Color3.new(0, 1, 0))
                 or (health > 0.3 and Color3.new(1, 1, 0))
                 or Color3.new(1, 0, 0)
+            objects.Health.Visible = true
         else
             objects.Box.Visible = false
             objects.Name.Visible = false
+            objects.HealthBg.Visible = false
             objects.Health.Visible = false
         end
     end
 end
 
 function ESP:Clear()
-    for _, objects in pairs(self.Objects) do
-        for _, drawing in pairs(objects) do
-            pcall(function() drawing:Destroy() end)
-        end
+    for _, target in pairs(self.Targets) do
+        self:RemoveObjects(target.objects)
     end
-    self.Objects = {}
+    self.Targets = {}
 end
 
 -- ====================== BHOP ======================
