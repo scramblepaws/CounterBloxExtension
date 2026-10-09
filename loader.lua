@@ -37,11 +37,20 @@ Library.LogsEnabled = true
 
 -- ====================== STATE ======================
 local state = {
+    -- aimbot
     Aim = false,
     AimFov = 120,
-    AimSmooth = 8,
+    AimSmooth = 4,
+    AimPart = "Head",
+    AimTeamCheck = false,
+    AimVisible = false,
+    AimHold = true,
+    AimFovCircle = true,
+    AimPrediction = 0,
+
     Trigger = false,
 
+    -- esp
     Esp = false,
     EspBox = true,
     EspName = true,
@@ -49,15 +58,23 @@ local state = {
     EspTracer = false,
     EspDistance = false,
     EspColor = Color3.fromRGB(84, 134, 255),
+    EspTeamCheck = false,
+
     Crosshair = false,
     Fov = 70,
 
+    -- misc
     Bhop = false,
     Speed = false,
     SpeedVal = 16,
     Fly = false,
     TextureBug = false,
 }
+
+local function sameTeam(player)
+    local myTeam = LocalPlayer.Team
+    return myTeam ~= nil and player.Team == myTeam
+end
 
 -- ====================== ESP ======================
 local ESP = {}
@@ -107,7 +124,7 @@ end
 
 function ESP:Start()
     if self.Connection then return end
-    self.Connection = RunService.RenderStepped:Connect(function() self:Render() end)
+    self.Connection = RunService.RenderStepped:Connect(function(dt) self:Render(dt) end)
 end
 
 function ESP:Stop()
@@ -118,40 +135,51 @@ function ESP:Stop()
     self:Clear()
 end
 
-function ESP:AddCharacter()
+local FADE_TIME = 0.18
+
+function ESP:CreateObjects()
     local o = {}
     if hasDrawing then
-        o.Box = Drawing.new("Square")
-        o.Box.Thickness = 1
-        o.Box.Filled = false
-        o.Box.Transparency = 1
-        o.Box.Visible = false
-        o.Box.Color = state.EspColor
+        -- outer border (thick dark outline)
+        o.BoxOuter = Drawing.new("Square")
+        o.BoxOuter.Thickness = 3
+        o.BoxOuter.Filled = false
+        o.BoxOuter.Transparency = 0
+        o.BoxOuter.Color = Color3.new(0, 0, 0)
+        o.BoxOuter.Visible = false
+
+        -- inner border (thin colored)
+        o.BoxInner = Drawing.new("Square")
+        o.BoxInner.Thickness = 1
+        o.BoxInner.Filled = false
+        o.BoxInner.Transparency = 0
+        o.BoxInner.Color = state.EspColor
+        o.BoxInner.Visible = false
 
         o.Name = Drawing.new("Text")
         o.Name.Font = Drawing.Fonts.UI
         o.Name.Size = 13
         o.Name.Center = true
         o.Name.Outline = true
-        o.Name.Transparency = 1
+        o.Name.Transparency = 0
         o.Name.Visible = false
         o.Name.Color = Color3.new(1, 1, 1)
 
         o.HealthBg = Drawing.new("Square")
         o.HealthBg.Filled = true
-        o.HealthBg.Transparency = 1
+        o.HealthBg.Transparency = 0
         o.HealthBg.Visible = false
         o.HealthBg.Color = Color3.new(0, 0, 0)
 
         o.Health = Drawing.new("Square")
         o.Health.Filled = true
-        o.Health.Transparency = 1
+        o.Health.Transparency = 0
         o.Health.Visible = false
         o.Health.Color = Color3.new(0, 1, 0)
 
         o.Tracer = Drawing.new("Line")
         o.Tracer.Thickness = 1
-        o.Tracer.Transparency = 1
+        o.Tracer.Transparency = 0
         o.Tracer.Visible = false
         o.Tracer.Color = Color3.new(1, 1, 1)
 
@@ -160,7 +188,7 @@ function ESP:AddCharacter()
         o.Distance.Size = 13
         o.Distance.Center = true
         o.Distance.Outline = true
-        o.Distance.Transparency = 1
+        o.Distance.Transparency = 0
         o.Distance.Visible = false
         o.Distance.Color = Color3.new(1, 1, 1)
     end
@@ -171,65 +199,112 @@ function ESP:RemoveObjects(o)
     for _, d in pairs(o) do pcall(function() d:Remove() end) end
 end
 
-function ESP:Render()
+function ESP:SetAlpha(o, alpha)
+    o.BoxOuter.Transparency = alpha
+    o.BoxInner.Transparency = alpha
+    o.Name.Transparency = alpha
+    o.HealthBg.Transparency = alpha
+    o.Health.Transparency = alpha
+    o.Tracer.Transparency = alpha
+    o.Distance.Transparency = alpha
+end
+
+function ESP:Hide(o)
+    o.BoxOuter.Visible = false
+    o.BoxInner.Visible = false
+    o.Name.Visible = false
+    o.HealthBg.Visible = false
+    o.Health.Visible = false
+    o.Tracer.Visible = false
+    o.Distance.Visible = false
+end
+
+function ESP:Render(dt)
     if not hasDrawing then return end
     local camera = workspace.CurrentCamera
     if not camera then return end
 
-    for player, target in pairs(self.Targets) do
-        if not player.Parent then
-            self:RemoveObjects(target.objects)
-            self.Targets[player] = nil
+    -- create targets on appear, mark dead on death / leave / team
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+
+        local target = self.Targets[player]
+        local character = player.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local alive = character and humanoid and humanoid.Health > 0
+        local show = alive and not (state.EspTeamCheck and sameTeam(player))
+
+        if show then
+            if not target or target.character ~= character then
+                if target then self:RemoveObjects(target.objects) end
+                target = {
+                    character = character,
+                    objects = self:CreateObjects(),
+                    alpha = 0,
+                    dead = false,
+                }
+                self.Targets[player] = target
+            end
+            target.dead = false
+        elseif target then
+            target.dead = true
         end
     end
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
-        local character = player.Character
-        if not character or not character.Parent then continue end
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-
-        if not humanoid or humanoid.Health <= 0 then
-            local target = self.Targets[player]
-            if target then
-                self:RemoveObjects(target.objects)
-                self.Targets[player] = nil
-            end
-            continue
-        end
-
-        local target = self.Targets[player]
-        if not target or target.character ~= character then
-            if target then self:RemoveObjects(target.objects) end
-            target = { character = character, objects = self:AddCharacter() }
-            self.Targets[player] = target
-        end
-
-        local min, max, onscreen = getBoundingBox(character)
+    -- render + fade
+    for player, target in pairs(self.Targets) do
         local o = target.objects
+        local step = (dt or 0.016) / FADE_TIME
 
-        if not onscreen then
-            o.Box.Visible = false
-            o.Name.Visible = false
-            o.HealthBg.Visible = false
-            o.Health.Visible = false
-            o.Tracer.Visible = false
-            o.Distance.Visible = false
+        if target.dead or not player.Parent then
+            target.alpha = math.max(0, target.alpha - step)
+            if target.alpha <= 0 then
+                self:RemoveObjects(o)
+                self.Targets[player] = nil
+                continue
+            end
+        else
+            target.alpha = math.min(1, target.alpha + step)
+        end
+
+        local character = target.character
+        local dying = target.dead or not player.Parent
+        local min, max, onscreen = getBoundingBox(character)
+
+        if onscreen then
+            -- temporal smoothing keeps the box stable
+            if target.lastMin then
+                min = target.lastMin + (min - target.lastMin) * 0.35
+                max = target.lastMax + (max - target.lastMax) * 0.35
+            end
+            target.lastMin, target.lastMax = min, max
+        elseif dying and target.lastMin then
+            -- keep the last known box so the death fade is visible
+            min, max = target.lastMin, target.lastMax
+        else
+            self:Hide(o)
             continue
         end
 
+        local alpha = target.alpha
         local width = max.X - min.X
         local height = max.Y - min.Y
         local centerX = (min.X + max.X) / 2
-        local health = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        local health = humanoid and math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1) or 0
 
         if state.EspBox then
-            o.Box.Position = min
-            o.Box.Size = Vector2.new(width, height)
-            o.Box.Color = state.EspColor
-            o.Box.Visible = true
+            o.BoxOuter.Position = min - Vector2.new(1, 1)
+            o.BoxOuter.Size = Vector2.new(width + 2, height + 2)
+            o.BoxOuter.Visible = true
+
+            o.BoxInner.Position = min
+            o.BoxInner.Size = Vector2.new(width, height)
+            o.BoxInner.Color = state.EspColor
+            o.BoxInner.Visible = true
         else
-            o.Box.Visible = false
+            o.BoxOuter.Visible = false
+            o.BoxInner.Visible = false
         end
 
         if state.EspName then
@@ -241,7 +316,7 @@ function ESP:Render()
         end
 
         if state.EspHealth then
-            local barX = min.X - 5
+            local barX = min.X - 6
             o.HealthBg.Position = Vector2.new(barX, min.Y)
             o.HealthBg.Size = Vector2.new(3, height)
             o.HealthBg.Visible = true
@@ -272,6 +347,8 @@ function ESP:Render()
         else
             o.Distance.Visible = false
         end
+
+        self:SetAlpha(o, alpha)
     end
 end
 
@@ -286,9 +363,12 @@ end
 local Aimbot = {}
 Aimbot.__index = Aimbot
 
+local CIRCLE_SEGMENTS = 64
+
 function Aimbot.new()
     local self = setmetatable({}, Aimbot)
     self.Connection = nil
+    self.Circle = {}
     return self
 end
 
@@ -302,48 +382,130 @@ function Aimbot:Stop()
         self.Connection:Disconnect()
         self.Connection = nil
     end
+    for _, line in ipairs(self.Circle) do
+        pcall(function() line:Remove() end)
+    end
+    self.Circle = {}
+end
+
+function Aimbot:aimKeyDown()
+    if not state.AimHold then return true end
+    return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+end
+
+function Aimbot:getAimPart(character)
+    local which = state.AimPart
+    if which == "Head" then
+        return character:FindFirstChild("Head")
+    elseif which == "Torso" then
+        return character:FindFirstChild("UpperTorso")
+            or character:FindFirstChild("Torso")
+            or character:FindFirstChild("HumanoidRootPart")
+    end
+    return character:FindFirstChild("HumanoidRootPart")
+end
+
+function Aimbot:isVisible(character, part)
+    local camera = workspace.CurrentCamera
+    if not camera then return false end
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = { LocalPlayer.Character }
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.IgnoreWater = true
+    local origin = camera.CFrame.Position
+    local result = workspace:Raycast(origin, part.Position - origin, params)
+    if not result then return true end
+    return result.Instance:IsDescendantOf(character)
 end
 
 function Aimbot:FindTarget()
     local camera = workspace.CurrentCamera
     if not camera then return nil end
     local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
-    local best, bestDist = nil, state.AimFov / 2
+    local radius = state.AimFov
+
+    local bestPart, bestScore = nil, math.huge
 
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            local char = player.Character
-            local head = char and char:FindFirstChild("Head")
-            local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-            if head and humanoid and humanoid.Health > 0 then
-                local pos, onScreen = camera:WorldToScreenPoint(head.Position)
-                if onScreen then
-                    local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
-                    if dist < bestDist then
-                        bestDist = dist
-                        best = head
+        if player ~= LocalPlayer and not (state.AimTeamCheck and sameTeam(player)) then
+            local character = player.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            if character and humanoid and humanoid.Health > 0 then
+                local part = self:getAimPart(character)
+                if part then
+                    local pos, onScreen = camera:WorldToScreenPoint(part.Position)
+                    if onScreen then
+                        local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+                        if dist <= radius and dist < bestScore then
+                            if (not state.AimVisible) or self:isVisible(character, part) then
+                                bestScore = dist
+                                bestPart = part
+                            end
+                        end
                     end
                 end
             end
         end
     end
-    return best
+    return bestPart
 end
 
 function Aimbot:Step()
+    self:DrawCircle()
+
     if not state.Aim then return end
     local camera = workspace.CurrentCamera
     if not camera then return end
+    if not self:aimKeyDown() then return end
 
-    local target = self:FindTarget()
-    if not target then return end
+    local part = self:FindTarget()
+    if not part then return end
 
-    local goal = CFrame.lookAt(camera.CFrame.Position, target.Position)
-    if state.AimSmooth and state.AimSmooth > 1 then
-        local alpha = math.clamp(1 / state.AimSmooth, 0.05, 1)
-        camera.CFrame = camera.CFrame:Lerp(goal, alpha)
+    local targetPos = part.Position
+    if state.AimPrediction > 0 then
+        local root = part.Parent and part.Parent:FindFirstChild("HumanoidRootPart")
+        if root then
+            local dist = (root.Position - camera.CFrame.Position).Magnitude
+            targetPos = targetPos + root.AssemblyLinearVelocity * (dist / 1000) * state.AimPrediction
+        end
+    end
+
+    local goal = CFrame.lookAt(camera.CFrame.Position, targetPos)
+    local smooth = state.AimSmooth
+    if smooth and smooth > 1 then
+        camera.CFrame = camera.CFrame:Lerp(goal, math.clamp(1 / smooth, 0.02, 1))
     else
         camera.CFrame = goal
+    end
+end
+
+function Aimbot:DrawCircle()
+    if not hasDrawing then return end
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+
+    local show = state.AimFovCircle
+    local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+    local radius = state.AimFov
+
+    for i = 1, CIRCLE_SEGMENTS do
+        local line = self.Circle[i]
+        if not line then
+            line = Drawing.new("Line")
+            line.Thickness = 1
+            line.Transparency = 1
+            line.Color = Color3.new(1, 1, 1)
+            line.Visible = false
+            self.Circle[i] = line
+        end
+
+        line.Visible = show
+        if show then
+            local a1 = (i / CIRCLE_SEGMENTS) * math.pi * 2
+            local a2 = (((i % CIRCLE_SEGMENTS) + 1) / CIRCLE_SEGMENTS) * math.pi * 2
+            line.From = center + Vector2.new(math.cos(a1), math.sin(a1)) * radius
+            line.To = center + Vector2.new(math.cos(a2), math.sin(a2)) * radius
+        end
     end
 end
 
@@ -652,9 +814,30 @@ aimToggle:Slider({
 aimToggle:Slider({
     Name = "Smoothness",
     Flag = "AimSmooth",
-    Min = 1, Max = 30, Default = 8,
+    Min = 1, Max = 30, Default = 4,
     Callback = function(v) state.AimSmooth = v end,
 })
+
+aimToggle:Slider({
+    Name = "Prediction",
+    Flag = "AimPrediction",
+    Min = 0, Max = 2, Default = 0, Decimals = 2,
+    Callback = function(v) state.AimPrediction = v end,
+})
+
+aimToggle:Dropdown({
+    Name = "Target Part",
+    Flag = "AimPart",
+    Items = {"Head", "Torso", "Nearest"},
+    Default = "Head",
+    Multi = false,
+    Callback = function(v) state.AimPart = v end,
+})
+
+aimSection:Toggle({ Name = "Team Check", Flag = "AimTeamCheck", Default = false, Callback = function(v) state.AimTeamCheck = v end })
+aimSection:Toggle({ Name = "Visible Check", Flag = "AimVisible", Default = false, Callback = function(v) state.AimVisible = v end })
+aimSection:Toggle({ Name = "Hold RMB", Flag = "AimHold", Default = true, Callback = function(v) state.AimHold = v end })
+aimSection:Toggle({ Name = "FOV Circle", Flag = "AimFovCircle", Default = true, Callback = function(v) state.AimFovCircle = v end })
 
 local triggerSection = aimPage:Section({ Name = "Triggerbot", Side = 2 })
 triggerSection:Toggle({
@@ -685,6 +868,7 @@ espSection:Toggle({ Name = "Name", Flag = "EspName", Default = true, Callback = 
 espSection:Toggle({ Name = "Health", Flag = "EspHealth", Default = true, Callback = function(v) state.EspHealth = v end })
 espSection:Toggle({ Name = "Tracer", Flag = "EspTracer", Default = false, Callback = function(v) state.EspTracer = v end })
 espSection:Toggle({ Name = "Distance", Flag = "EspDistance", Default = false, Callback = function(v) state.EspDistance = v end })
+espSection:Toggle({ Name = "Team Check", Flag = "EspTeamCheck", Default = false, Callback = function(v) state.EspTeamCheck = v end })
 espSection:Label("Box Color"):Colorpicker({
     Name = "Color",
     Flag = "EspColor",
