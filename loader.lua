@@ -126,34 +126,32 @@ ESP.__index = ESP
 
 local FADE_TIME = 0.15
 
--- returns min, max, onscreen for a character's overall bounding box
+-- Project head-top and feet to screen (2 points per player, very cheap).
+-- Counter-Blox exposes a custom head hitbox (HeadHB); fall back to Head.
 local function projectBox(character)
     local camera = workspace.CurrentCamera
     if not camera then return nil end
 
-    local ok, cf, size = pcall(character.GetBoundingBox, character)
-    if not ok or not cf then return nil end
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    local head = character:FindFirstChild("HeadHB") or character:FindFirstChild("Head")
 
-    local hx, hy, hz = size.X / 2, size.Y / 2, size.Z / 2
-    local min = Vector2.new(math.huge, math.huge)
-    local max = Vector2.new(-math.huge, -math.huge)
-    local onscreen = false
+    local topPos = (head and head.Position or root.Position) + Vector3.new(0, 1.2, 0)
+    local bottomPos = root.Position - Vector3.new(0, 3, 0)
 
-    for ix = -1, 1, 2 do
-        for iy = -1, 1, 2 do
-            for iz = -1, 1, 2 do
-                local world = (cf * CFrame.new(hx * ix, hy * iy, hz * iz)).Position
-                local pos, vis = camera:WorldToViewportPoint(world)
-                if vis then
-                    local v = Vector2.new(pos.X, pos.Y)
-                    min = min:Min(v)
-                    max = max:Max(v)
-                    onscreen = true
-                end
-            end
-        end
-    end
-    return min, max, onscreen
+    local top, tv = camera:WorldToViewportPoint(topPos)
+    local bottom, bv = camera:WorldToViewportPoint(bottomPos)
+    if not (tv and bv) then return nil end
+
+    local yTop = math.min(top.Y, bottom.Y)
+    local yBottom = math.max(top.Y, bottom.Y)
+    local height = math.max(yBottom - yTop, 1)
+    local width = height * 0.45
+    local cx = top.X
+
+    local min = Vector2.new(cx - width / 2, yTop)
+    local max = Vector2.new(cx + width / 2, yBottom)
+    return min, max, true
 end
 
 function ESP.new()
@@ -1348,7 +1346,7 @@ end })
 
 -- UI SETTINGS
 local menuGroup = Tabs["UI Settings"]:AddLeftGroupbox("Menu")
-menuGroup:AddButton("Unload", function() Library:Unload() end)
+menuGroup:AddButton({ Text = "Unload", Func = function() Library:Unload() end })
 menuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { Default = "Delete", NoUI = true, Text = "Menu keybind" })
 Library.ToggleKeybind = Options.MenuKeybind
 
