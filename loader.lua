@@ -1,7 +1,7 @@
 -- Counter-Blox Extension Loader
 -- Load this via: loadstring(game:HttpGet("https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"))()
 
-local GIT_REF = "3367dca"
+local GIT_REF = "6d2748b"
 
 local function notify(text, color)
     local ok, gui = pcall(function()
