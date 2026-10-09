@@ -1,0 +1,26 @@
+{
+  "menu": {
+    "openKey": "F4",
+    "closeKey": "F4"
+  },
+  "bindings": {
+    "key_b": "ToggleBunnyhop",
+    "key_t": "ToggleTextureBug",
+    "key_e": "ToggleESP",
+    "mouse_4": "TriggerBunnyhop"
+  },
+  "bunnyhop": {
+    "enabled": false,
+    "force": 50,
+    "cooldown": 0.15
+  },
+  "texturebug": {
+    "enabled": false,
+    "slideSpeed": 0.85
+  },
+  "esp": {
+    "enabled": false,
+    "boxColor": [255, 255, 255],
+    "borderColor": [255, 0, 0]
+  }
+}
