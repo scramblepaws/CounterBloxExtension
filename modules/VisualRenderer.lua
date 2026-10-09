@@ -55,85 +55,111 @@ function VisualRenderer:_StopESP()
 end
 
 function VisualRenderer:_RenderESP()
-    -- Iterate all players and draw boxes around their characters
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= self.Player then
             local character = player.Character
             if character then
-                local humanoid = character:FindFirstChild("Humanoid")
+                local humanoid = character:FindFirstChildOfClass("Humanoid")
                 local rootPart = character:FindFirstChild("HumanoidRootPart")
+                local head = character:FindFirstChild("Head")
                 
-                if humanoid and rootPart and humanoid.Health > 0 then
-                    self:_DrawESPBox(player, character, rootPart)
+                if humanoid and rootPart and head and humanoid.Health > 0 then
+                    self:_DrawESPBox(player, humanoid, rootPart, head)
                 end
             end
         end
     end
+    
+    -- Clean up boxes for players who left
+    for name, box in pairs(self.ESPBoxes) do
+        local found = false
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Name == name then
+                found = true
+                break
+            end
+        end
+        if not found then
+            box:Destroy()
+            self.ESPBoxes[name] = nil
+        end
+    end
 end
 
-function VisualRenderer:_DrawESPBox(player, character, rootPart)
-    local espBox = self.ESPBoxes[player.Name]
-    
-    if not espBox then
-        espBox = self:_CreateESPBox(player)
-        self.ESPBoxes[player.Name] = espBox
-    end
-    
-    -- Update box position based on character
+function VisualRenderer:_DrawESPBox(player, humanoid, rootPart, head)
     local camera = workspace.CurrentCamera
     if not camera then return end
     
-    local screenPos, onScreen = camera:WorldToScreenPoint(rootPart.Position)
+    local box = self.ESPBoxes[player.Name]
+    if not box then
+        box = self:_CreateESPBox(player)
+        self.ESPBoxes[player.Name] = box
+    end
     
-    if onScreen then
-        espBox.Visible = true
-        espBox.Position = UDim2.new(0, screenPos.X, 0, screenPos.Y)
+    -- Project the top of the head and bottom of the feet to screen space
+    local topPos = head.Position + Vector3.new(0, 1.2, 0)
+    local bottomPos = rootPart.Position - Vector3.new(0, 3, 0)
+    
+    local top, topVisible = camera:WorldToScreenPoint(topPos)
+    local bottom, bottomVisible = camera:WorldToScreenPoint(bottomPos)
+    
+    if topVisible and bottomVisible then
+        local height = math.abs(bottom.Y - top.Y)
+        local width = height * 0.45
+        local x = top.X - width / 2
+        local y = top.Y
         
-        -- Update health bar if present
-        local humanoid = character:FindFirstChild("Humanoid")
-        if humanoid then
-            local healthBar = espBox:FindFirstChild("HealthBar")
-            if healthBar then
-                local healthPercent = humanoid.Health / humanoid.MaxHealth
-                healthBar.Size = UDim2.new(healthPercent, 0, 0, 4)
-                healthBar.BackgroundColor3 = self:_HealthColor(healthPercent)
-            end
+        box.Size = UDim2.new(0, width, 0, height)
+        box.Position = UDim2.new(0, x, 0, y)
+        box.Visible = true
+        
+        -- Update name label position
+        local nameLabel = box:FindFirstChild("Name")
+        if nameLabel then
+            nameLabel.Position = UDim2.new(0, 0, 0, -18)
+        end
+        
+        -- Update health bar
+        local healthBar = box:FindFirstChild("HealthBar")
+        if healthBar then
+            local healthPercent = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
+            healthBar.Size = UDim2.new(healthPercent, 0, 0, 3)
+            healthBar.BackgroundColor3 = self:_HealthColor(healthPercent)
         end
     else
-        espBox.Visible = false
+        box.Visible = false
     end
 end
 
 function VisualRenderer:_CreateESPBox(player)
     local box = Instance.new("Frame")
     box.Name = "ESP_" .. player.Name
-    box.Size = UDim2.new(0, 50, 0, 60)
-    box.AnchorPoint = Vector2.new(0.5, 0.5)
+    box.AnchorPoint = Vector2.new(0, 0)
     box.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    box.BackgroundTransparency = 0.7
+    box.BackgroundTransparency = 0.85
     box.BorderSizePixel = 1
     box.BorderColor3 = Color3.fromRGB(255, 0, 0)
     box.ZIndex = 10
+    box.Visible = false
     box.Parent = self.Player.PlayerGui
     
-    -- Name label
     local nameLabel = Instance.new("TextLabel")
     nameLabel.Name = "Name"
-    nameLabel.Size = UDim2.new(1, 0, 0, 20)
-    nameLabel.Position = UDim2.new(0, 0, 0, -20)
+    nameLabel.Size = UDim2.new(1, 0, 0, 16)
+    nameLabel.Position = UDim2.new(0, 0, 0, -18)
     nameLabel.BackgroundTransparency = 1
     nameLabel.Font = Enum.Font.SourceSans
     nameLabel.TextSize = 14
     nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     nameLabel.Text = player.Name
+    nameLabel.TextXAlignment = Enum.TextXAlignment.Center
     nameLabel.ZIndex = 11
     nameLabel.Parent = box
     
-    -- Health bar
     local healthBar = Instance.new("Frame")
     healthBar.Name = "HealthBar"
-    healthBar.Size = UDim2.new(1, 0, 0, 4)
-    healthBar.Position = UDim2.new(0, 0, 0, -28)
+    healthBar.Size = UDim2.new(1, 0, 0, 3)
+    healthBar.Position = UDim2.new(0, 0, 0, -4)
     healthBar.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
     healthBar.BorderSizePixel = 0
     healthBar.ZIndex = 11

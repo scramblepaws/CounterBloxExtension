@@ -90,43 +90,39 @@ end
 function MovementEngine:_CheckBunnyhop()
     if not self.Humanoid or not self.HumanoidRootPart then return end
     
+    -- Only hop while the player is actively moving
+    if self.Humanoid.MoveDirection.Magnitude <= 0 then return end
+    
+    -- Only hop when grounded
+    if self.Humanoid.FloorMaterial == Enum.Material.Air then return end
+    
     local now = os.clock()
-    local grounded = self:_IsGrounded()
+    if now - self.LastJumpTime < self.BunnyhopCooldown then return end
     
-    -- Detect if the player is holding jump
-    local isJumpHeld = UserInputService:IsKeyDown(Enum.KeyCode.Space)
-    
-    if grounded and isJumpHeld then
-        -- Only trigger bunnyhop if within cooldown window
-        if now - self.LastJumpTime > self.BunnyhopCooldown then
-            self:_ApplyBunnyhopImpulse()
-            self.LastJumpTime = now
-        end
-    end
-end
-
-function MovementEngine:_IsGrounded()
-    if not self.HumanoidRootPart then return false end
-    
-    local rayOrigin = self.HumanoidRootPart.Position
-    local rayDirection = Vector3.new(0, -3.5, 0)
-    
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterDescendantsInstances = {self.Character}
-    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-    
-    local rayResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
-    
-    return rayResult ~= nil
+    self:_ApplyBunnyhopImpulse()
+    self.LastJumpTime = now
 end
 
 function MovementEngine:_ApplyBunnyhopImpulse()
-    if not self.Humanoid then return end
+    if not self.Humanoid or not self.HumanoidRootPart then return end
     
-    local rootVelocity = self.HumanoidRootPart.AssemblyLinearVelocity
-    local newVelocity = Vector3.new(rootVelocity.X, self.BunnyhopForce, rootVelocity.Z)
+    -- Preserve horizontal momentum, add a forward boost for speed gain
+    local vel = self.HumanoidRootPart.AssemblyLinearVelocity
+    local moveDir = self.Humanoid.MoveDirection
+    local boost = moveDir.Unit * (self.Humanoid.WalkSpeed * 0.2)
     
-    self.HumanoidRootPart.AssemblyLinearVelocity = newVelocity
+    self.Humanoid.Jump = true
+    self.HumanoidRootPart.AssemblyLinearVelocity = Vector3.new(
+        vel.X + boost.X,
+        vel.Y,
+        vel.Z + boost.Z
+    )
+    
+    task.defer(function()
+        if self.Humanoid then
+            self.Humanoid.Jump = false
+        end
+    end)
 end
 
 function MovementEngine:TriggerBunnyhop()
