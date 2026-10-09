@@ -263,10 +263,19 @@ function MenuManager:_ListenForBindingInput()
         if self.BindingMode == "key" and input.UserInputType == Enum.UserInputType.Keyboard then
             self:_AssignBinding(self.BindingMode, input.KeyCode.Value)
             connection:Disconnect()
-        elseif self.BindingMode == "mouse" and input.UserInputType == Enum.UserInputType.MouseButton then
-            local mouseIndex = tonumber(string.sub(input.UserInputType.ToString(input.UserInputType), -1))
-            self:_AssignBinding(self.BindingMode, mouseIndex)
-            connection:Disconnect()
+        elseif self.BindingMode == "mouse" then
+            local btn = nil
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                btn = 1
+            elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+                btn = 2
+            elseif input.UserInputType == Enum.UserInputType.MouseButton3 then
+                btn = 3
+            end
+            if btn then
+                self:_AssignBinding(self.BindingMode, btn)
+                connection:Disconnect()
+            end
         end
     end)
     

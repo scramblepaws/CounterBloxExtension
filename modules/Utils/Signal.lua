@@ -12,7 +12,9 @@ end
 
 function Signal:Fire(...)
     for _, connection in ipairs(self._connectionsList) do
-        connection(...)
+        if connection.connected then
+            connection.callback(...)
+        end
     end
 end
 
