@@ -772,6 +772,117 @@ function Recon:FullReport()
     return #self.Lines
 end
 
+-- locate GC'd tables that expose a named key (e.g. Counter-Blox's controller)
+function Recon:FindGCKey(key)
+    self:Add("===== GC TABLES WITH KEY '" .. key .. "' =====")
+    local count = 0
+    pcall(function()
+        for _, obj in ipairs(getgc(true)) do
+            if type(obj) == "table" and rawget(obj, key) ~= nil then
+                count = count + 1
+                self:Add("#" .. count .. "  " .. key .. " = " .. type(rawget(obj, key)))
+                for k, v in pairs(obj) do
+                    if type(v) == "function" then
+                        self:Add("     ." .. tostring(k) .. "()")
+                    elseif type(v) ~= "table" then
+                        self:Add("     ." .. tostring(k) .. " = " .. tostring(v))
+                    end
+                end
+            end
+        end
+    end)
+    if count == 0 then
+        self:Add("(none found - key may not exist)")
+    end
+end
+
+-- find functions whose bytecode constants mention a string (remote names, etc.)
+function Recon:FindGCCallers(str)
+    self:Add("===== FUNCTIONS REFERENCING '" .. str .. "' =====")
+    local count = 0
+    pcall(function()
+        for _, obj in ipairs(getgc(true)) do
+            if type(obj) == "function" then
+                local ok, consts = pcall(debug.getconstants, obj)
+                if ok and type(consts) == "table" then
+                    for _, c in ipairs(consts) do
+                        if type(c) == "string" and c:find(str, 1, true) then
+                            count = count + 1
+                            local info = debug.getinfo(obj)
+                            self:Add("fn '" .. c .. "'  src=" .. tostring(info and info.short_src))
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if count == 0 then
+        self:Add("(no function constants matched)")
+    end
+end
+
+-- dump the keys of every loaded ModuleScript's environment
+function Recon:DumpModuleFunctions()
+    self:Add("===== MODULE ENVIRONMENTS =====")
+    pcall(function()
+        for _, mod in ipairs(getloadedmodules()) do
+            local ok, env = pcall(getsenv, mod)
+            if ok and type(env) == "table" then
+                self:Add("-- " .. mod:GetFullName())
+                local keys = {}
+                for k, v in pairs(env) do
+                    if type(v) == "function" then
+                        table.insert(keys, "  ." .. tostring(k) .. "()")
+                    end
+                end
+                table.sort(keys)
+                for _, k in ipairs(keys) do
+                    self:Add(k)
+                end
+            end
+        end
+    end)
+end
+
+-- try to locate Counter-Blox's client controller by its known member names
+function Recon:FindController()
+    for _, key in ipairs({ "moveFunc", "speedupdate", "shootFunc", "fireFunc" }) do
+        self:FindGCKey(key)
+    end
+end
+
+-- log everything the server sends to the client
+function Recon:ToggleRemoteReceiver()
+    if self.Receiving then
+        self.Receiving = false
+        for _, conn in ipairs(self.RecvConns or {}) do
+            pcall(function() conn:Disconnect() end)
+        end
+        self.RecvConns = {}
+        self:Add("Remote receiver stopped")
+        return false
+    end
+    self.Receiving = true
+    self.RecvConns = {}
+    pcall(function()
+        for _, obj in ipairs(game:GetDescendants()) do
+            if obj:IsA("RemoteEvent") then
+                local conn = obj.OnClientEvent:Connect(function(...)
+                    local args = {}
+                    for i = 1, math.min(4, select("#", ...)) do
+                        args[i] = tostring((select(i, ...)))
+                    end
+                    print("[CBX-RECV] " .. obj:GetFullName() .. "(" .. table.concat(args, ", ") .. ")")
+                end)
+                table.insert(self.RecvConns, conn)
+            end
+        end
+    end)
+    self:Add("Remote receiver started (" .. #self.RecvConns .. " events)")
+    return true
+end
+
 -- ====================== INSTANCES ======================
 local EspInst = ESP.new()
 local AimbotInst = Aimbot.new()
@@ -1006,8 +1117,26 @@ reconButton("Full report (console + file)", function()
 end)
 reconButton("Dump env: 'Animate'", function() ReconInst:DumpEnv("Animate") end)
 
-local logSection = devPage:Section({ Name = "Remote logging", Side = 2 })
-logSection:Toggle({
+local gameSection = devPage:Section({ Name = "Game functions", Side = 2 })
+local function gameButton(name, fn)
+    gameSection:Button({
+        Name = name,
+        Callback = function()
+            ReconInst:Clear()
+            fn()
+            notify(name, "Done - " .. #ReconInst.Lines .. " lines (console)")
+        end,
+    })
+end
+
+gameButton("Find controller (moveFunc etc)", function() ReconInst:FindController() end)
+gameButton("Find GC key: 'moveFunc'", function() ReconInst:FindGCKey("moveFunc") end)
+gameButton("Dump module envs", function() ReconInst:DumpModuleFunctions() end)
+gameButton("Find callers: FireServer", function() ReconInst:FindGCCallers("FireServer") end)
+gameButton("Find callers: Shoot", function() ReconInst:FindGCCallers("Shoot") end)
+gameButton("Find callers: Remote", function() ReconInst:FindGCCallers("Remote") end)
+
+gameSection:Toggle({
     Name = "Log FireServer calls",
     Flag = "ReconRemoteLog",
     Default = false,
@@ -1017,7 +1146,17 @@ logSection:Toggle({
         end
     end,
 })
-logSection:Label("Output goes to the console (and CounterBlox/recon.txt)")
+gameSection:Toggle({
+    Name = "Log server -> client events",
+    Flag = "ReconRemoteRecv",
+    Default = false,
+    Callback = function(v)
+        if v ~= ReconInst.Receiving then
+            ReconInst:ToggleRemoteReceiver()
+        end
+    end,
+})
+gameSection:Label("Output goes to the console")
 
 -- Settings (scale, configs, watermark) + init
 Window:Category("Settings")
