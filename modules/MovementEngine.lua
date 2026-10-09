@@ -111,18 +111,12 @@ function MovementEngine:_ApplyBunnyhopImpulse()
     local moveDir = self.Humanoid.MoveDirection
     local boost = moveDir.Unit * (self.Humanoid.WalkSpeed * 0.2)
     
-    self.Humanoid.Jump = true
+    self.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
     self.HumanoidRootPart.AssemblyLinearVelocity = Vector3.new(
         vel.X + boost.X,
         vel.Y,
         vel.Z + boost.Z
     )
-    
-    task.defer(function()
-        if self.Humanoid then
-            self.Humanoid.Jump = false
-        end
-    end)
 end
 
 function MovementEngine:TriggerBunnyhop()

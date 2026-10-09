@@ -37,6 +37,8 @@ function MenuManager:_CreateMenu()
     self.MenuGui.ResetOnSpawn = false
     self.MenuGui.Enabled = false
     self.MenuGui.IgnoreGuiInset = true
+    self.MenuGui.DisplayOrder = 99999
+    self.MenuGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
     self.MenuGui.Parent = playerGui
     
     self.Container = Instance.new("Frame")

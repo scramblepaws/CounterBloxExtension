@@ -4,9 +4,9 @@
     "closeKey": "F4"
   },
   "bindings": {
-    "key_b": "ToggleBunnyhop",
-    "key_t": "ToggleTextureBug",
-    "key_e": "ToggleESP",
+    "key_B": "ToggleBunnyhop",
+    "key_T": "ToggleTextureBug",
+    "key_E": "ToggleESP",
     "mouse_3": "TriggerBunnyhop"
   },
   "bunnyhop": {

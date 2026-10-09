@@ -25,11 +25,6 @@ end
 function InputHandler:_SetupInputListening()
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
-        
-        if self.MenuManager.IsOpen then
-            return -- Block gameplay inputs while menu is open
-        end
-        
         self:_ProcessInput(input)
     end)
 end
@@ -38,7 +33,7 @@ function InputHandler:_ProcessInput(input)
     local bindingKey = nil
     
     if input.UserInputType == Enum.UserInputType.Keyboard then
-        bindingKey = "key_" .. input.KeyCode.Value
+        bindingKey = "key_" .. input.KeyCode.Name
     elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
         bindingKey = "mouse_1"
     elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
@@ -81,8 +76,8 @@ function InputHandler:ConnectToMovement(movementEngine)
     self:RegisterAction("TriggerBunnyhop", function() movementEngine:TriggerBunnyhop() end)
     
     -- Default bindings for movement features
-    self:Bind("key_b", "ToggleBunnyhop")
-    self:Bind("key_t", "ToggleTextureBug")
+    self:Bind("key_B", "ToggleBunnyhop")
+    self:Bind("key_T", "ToggleTextureBug")
     self:Bind("mouse_3", "TriggerBunnyhop")
 end
 
@@ -90,7 +85,7 @@ function InputHandler:ConnectToVisuals(visualRenderer)
     self.VisualRenderer = visualRenderer
     
     self:RegisterAction("ToggleESP", function() visualRenderer:ToggleESP() end)
-    self:Bind("key_e", "ToggleESP")
+    self:Bind("key_E", "ToggleESP")
 end
 
 function InputHandler:Bind(bindingKey, actionName)

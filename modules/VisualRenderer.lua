@@ -14,6 +14,13 @@ function VisualRenderer.new()
     self.ESPBoxes = {}
     self.ESPConnection = nil
     
+    self.ESPGui = Instance.new("ScreenGui")
+    self.ESPGui.Name = "CBX_ESP"
+    self.ESPGui.ResetOnSpawn = false
+    self.ESPGui.DisplayOrder = 999
+    self.ESPGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    self.ESPGui.Parent = self.Player.PlayerGui
+    
     return self
 end
 
@@ -141,7 +148,7 @@ function VisualRenderer:_CreateESPBox(player)
     box.BorderColor3 = Color3.fromRGB(255, 0, 0)
     box.ZIndex = 10
     box.Visible = false
-    box.Parent = self.Player.PlayerGui
+    box.Parent = self.ESPGui
     
     local nameLabel = Instance.new("TextLabel")
     nameLabel.Name = "Name"
