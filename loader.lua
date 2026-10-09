@@ -1,6 +1,8 @@
 -- Counter-Blox Extension Loader
 -- Load this via: loadstring(game:HttpGet("https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"))()
 
+local GIT_REF = "3367dca"
+
 local function notify(text, color)
     local ok, gui = pcall(function()
         local playerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
@@ -27,7 +29,7 @@ local function notify(text, color)
 end
 
 local function loadModule(name)
-    local src = game:HttpGet("https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/modules/" .. name .. ".lua")
+    local src = game:HttpGet("https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@" .. GIT_REF .. "/modules/" .. name .. ".lua")
     local fn = loadstring(src)
     if not fn then
         error("[CBX] Failed to load module: " .. name)
