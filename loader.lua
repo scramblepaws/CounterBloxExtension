@@ -26,19 +26,15 @@ local cameraControl = CameraControl.new()
 -- Connect input handling
 inputHandler:ConnectToMenu(menuManager)
 inputHandler:ConnectToMovement(movementEngine)
+inputHandler:ConnectToVisuals(visualRenderer)
 
 -- Initialize visual renderer with ESP settings
 visualRenderer:Initialize()
 
 -- Start listening for game events
-menuManager.OnMenuToggled:Fire(cameraControl.LockCamera)
-menuManager.OnMenuToggled:Fire(visualRenderer.SetVisible)
-
--- Cleanup on shutdown
-game:BindToClose(function()
-    cameraControl.RestoreCamera()
-    visualRenderer.Cleanup()
-    menuManager.Destroy()
+menuManager.OnMenuToggled:Connect(function(isOpen)
+    cameraControl:SetLock(isOpen)
+    visualRenderer:SetVisible(isOpen)
 end)
 
 -- Expose API for external access (optional)

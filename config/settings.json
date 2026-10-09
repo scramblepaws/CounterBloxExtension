@@ -7,7 +7,7 @@
     "key_b": "ToggleBunnyhop",
     "key_t": "ToggleTextureBug",
     "key_e": "ToggleESP",
-    "mouse_4": "TriggerBunnyhop"
+    "mouse_3": "TriggerBunnyhop"
   },
   "bunnyhop": {
     "enabled": false,

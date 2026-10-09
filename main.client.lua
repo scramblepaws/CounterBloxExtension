@@ -44,19 +44,13 @@ local cameraControl = CameraControl.new()
 -- Setup connections
 inputHandler:ConnectToMenu(menuManager)
 inputHandler:ConnectToMovement(movementEngine)
+inputHandler:ConnectToVisuals(visualRenderer)
 visualRenderer:Initialize()
 
 -- Handle menu toggling
-menuManager.OnMenuToggled:Fire(function(menuOpen)
+menuManager.OnMenuToggled:Connect(function(menuOpen)
     cameraControl:SetLock(menuOpen)
     visualRenderer:SetVisible(menuOpen)
-end)
-
--- Cleanup
-game:BindToClose(function()
-    cameraControl.RestoreCamera()
-    visualRenderer.Cleanup()
-    menuManager.Destroy()
 end)
 
 -- Expose globally for debug access

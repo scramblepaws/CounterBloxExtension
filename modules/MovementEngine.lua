@@ -50,11 +50,7 @@ function MovementEngine:_SetupInputHandling()
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
         
-        if input.KeyCode == Enum.KeyCode.B then
-            self:ToggleBunnyhop()
-        elseif input.KeyCode == Enum.KeyCode.T then
-            self:ToggleTextureBug()
-        elseif input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
+        if input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
             if self.TextureBugEnabled then
                 self:StartSlide()
             end

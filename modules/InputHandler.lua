@@ -45,11 +45,10 @@ function InputHandler:_ProcessInput(input)
         bindingKey = "mouse_2"
     elseif input.UserInputType == Enum.UserInputType.MouseButton3 then
         bindingKey = "mouse_3"
-    elseif input.UserInputType == Enum.UserInputType.MouseButton4 then
-        bindingKey = "mouse_4"
-    elseif input.UserInputType == Enum.UserInputType.MouseButton5 then
-        bindingKey = "mouse_5"
     end
+    -- ponytail: Roblox's UserInputType only exposes MouseButton1/2/3.
+    -- Side buttons (4/5) aren't natively surfaced; add an executor-specific
+    -- bridge if one becomes available.
     
     if not bindingKey then return end
     
@@ -77,15 +76,20 @@ end
 function InputHandler:ConnectToMovement(movementEngine)
     self.MovementEngine = movementEngine
     
+    self:RegisterAction("ToggleBunnyhop", function() movementEngine:ToggleBunnyhop() end)
+    self:RegisterAction("ToggleTextureBug", function() movementEngine:ToggleTextureBug() end)
+    self:RegisterAction("TriggerBunnyhop", function() movementEngine:TriggerBunnyhop() end)
+    
     -- Default bindings for movement features
     self:Bind("key_b", "ToggleBunnyhop")
     self:Bind("key_t", "ToggleTextureBug")
-    self:Bind("mouse_4", "TriggerBunnyhop")
+    self:Bind("mouse_3", "TriggerBunnyhop")
 end
 
 function InputHandler:ConnectToVisuals(visualRenderer)
     self.VisualRenderer = visualRenderer
     
+    self:RegisterAction("ToggleESP", function() visualRenderer:ToggleESP() end)
     self:Bind("key_e", "ToggleESP")
 end
 
