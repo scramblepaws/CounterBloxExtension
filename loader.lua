@@ -5,7 +5,7 @@
     Load with:
     loadstring(game:HttpGet("https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"))()
 
-    Menu key: INSERT  (also F4)
+    Menu key: DELETE
 ]]
 
 local Players = game:GetService("Players")
@@ -186,7 +186,7 @@ end
 function UI:_Bind()
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
-        if input.KeyCode == Enum.KeyCode.Insert or input.KeyCode == Enum.KeyCode.F4 then
+        if input.KeyCode == Enum.KeyCode.Delete then
             self:Toggle()
         end
     end)
@@ -1123,4 +1123,4 @@ pcall(function()
     }
 end)
 
-notify("Counter-Blox loaded  |  INSERT to open menu")
+notify("Counter-Blox loaded  |  DELETE to open menu")
