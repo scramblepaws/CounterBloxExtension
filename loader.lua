@@ -10,7 +10,7 @@
     Menu key: DELETE
 ]]
 
-local SCRIPT_VERSION = "2.0"
+local SCRIPT_VERSION = "2.1"
 local LOADER_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"
 local VERSION_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/VERSION"
 
@@ -44,6 +44,8 @@ end
 local function notify(title, desc)
     pcall(function()
         local pg = LocalPlayer:WaitForChild("PlayerGui")
+        local existing = pg:FindFirstChild("CBXNotify")
+        if existing then existing:Destroy() end
         local gui = Instance.new("ScreenGui")
         gui.Name = "CBXNotify"
         gui.ResetOnSpawn = false
@@ -110,13 +112,11 @@ local state = {
     EspDistance = false,
     EspColor = Color3.fromRGB(84, 134, 255),
     EspTeamCheck = false,
-    EspBoxType = "normal",
     EspChams = false,
     EspChamsColor = Color3.fromRGB(84, 134, 255),
     EspHeadDot = false,
 
     Crosshair = false,
-    Fov = 70,
 
     -- kill effects
     KillEffect = false,
@@ -127,7 +127,6 @@ local state = {
     Bhop = false,
     BhopSpeed = 30,
     Speed = false,
-    SpeedVal = 16,
     Fly = false,
     TextureBug = false,
 
@@ -142,8 +141,7 @@ local function sameTeam(player)
 end
 
 -- ====================== ESP (optimized Drawing) ======================
--- One bounding box per player via Model:GetBoundingBox (8 points total),
--- instead of projecting every body part's 8 corners each frame.
+-- Two screen projections per player (head-top + feet), no per-part loop.
 local ESP = {}
 ESP.__index = ESP
 
@@ -354,7 +352,12 @@ function ESP:Render(dt)
         end
 
         local min, max, onscreen = projectBox(target.character)
-        if not onscreen then
+        if onscreen then
+            target.lastMin, target.lastMax = min, max
+        elseif (target.dead or not player.Parent) and target.lastMin then
+            -- keep the last known box so the death fade is visible
+            min, max = target.lastMin, target.lastMax
+        else
             self:Hide(o)
             continue
         end
@@ -470,12 +473,16 @@ end
 
 function Aimbot:Start()
     if self.Connection then return end
-    self.Connection = RunService.RenderStepped:Connect(function() self:Step() end)
+    -- camera priority so the snap beats the game's camera script
+    RunService:BindToRenderStep("CBXAimbot", Enum.RenderPriority.Camera.Value + 1, function()
+        self:Step()
+    end)
+    self.Connection = true
 end
 
 function Aimbot:Stop()
     if self.Connection then
-        self.Connection:Disconnect()
+        RunService:UnbindFromRenderStep("CBXAimbot")
         self.Connection = nil
     end
     for _, line in ipairs(self.Circle) do
@@ -618,14 +625,13 @@ function Ragebot.new()
     self.Connection = nil
     self.LastFire = 0
     self.Circle = {}
-    self.Firing = false
     return self
 end
 
--- Bind at camera priority so our snap wins over the game's camera script
+-- Bind above the camera (and above the legit aimbot) so our snap always wins
 function Ragebot:Start()
     if self.Connection then return end
-    RunService:BindToRenderStep("CBXRagebot", Enum.RenderPriority.Camera.Value + 1, function()
+    RunService:BindToRenderStep("CBXRagebot", Enum.RenderPriority.Camera.Value + 2, function()
         self:Step()
     end)
     self.Connection = true
@@ -636,32 +642,23 @@ function Ragebot:Stop()
         RunService:UnbindFromRenderStep("CBXRagebot")
         self.Connection = nil
     end
-    self:SetFiring(false)
     for _, line in ipairs(self.Circle) do pcall(function() line:Remove() end) end
     self.Circle = {}
-end
-
-function Ragebot:SetFiring(on)
-    if on and not self.Firing then
-        self.Firing = true
-        pcall(function() mouse1press() end)
-    elseif not on and self.Firing then
-        self.Firing = false
-        pcall(function() mouse1release() end)
-    end
 end
 
 function Ragebot:Fire()
     local now = os.clock()
     if now - self.LastFire < state.RageDelay then return end
     self.LastFire = now
-    -- down+up click (works for semi and auto)
-    pcall(function()
-        mouse1press()
+    -- prefer the full-click helper; fall back to press/release
+    if type(mouse1click) == "function" then
+        pcall(mouse1click)
+    elseif type(mouse1press) == "function" and type(mouse1release) == "function" then
+        pcall(mouse1press)
         task.delay(0.02, function()
-            pcall(function() mouse1release() end)
+            pcall(mouse1release)
         end)
-    end)
+    end
 end
 
 function Ragebot:getHitbox(character)
@@ -727,26 +724,18 @@ end
 
 function Ragebot:Step()
     self:DrawCircle()
-    if not state.Rage then
-        self:SetFiring(false)
-        return
-    end
+    if not state.Rage then return end
     local camera = workspace.CurrentCamera
     if not camera then return end
 
     local target = self:FindTarget()
-    if not target then
-        self:SetFiring(false)
-        return
-    end
+    if not target then return end
 
     -- instant snap (no smoothing); runs on camera priority so it sticks
     camera.CFrame = CFrame.lookAt(camera.CFrame.Position, target.Position)
 
     if state.RageAutoFire and not UserInputService:GetFocusedTextBox() then
         self:Fire()
-    else
-        self:SetFiring(false)
     end
 end
 
@@ -907,6 +896,7 @@ function Fly.new()
 end
 
 function Fly:Start()
+    if self.Connection then return end
     local character = LocalPlayer.Character
     if not character then return end
     local root = character:FindFirstChild("HumanoidRootPart")
@@ -923,7 +913,6 @@ function Fly:Start()
     self.BodyVel.Velocity = Vector3.new(0, 0, 0)
     self.BodyVel.Parent = root
 
-    if self.Connection then return end
     self.Connection = RunService.RenderStepped:Connect(function() self:Step() end)
 end
 
@@ -1657,7 +1646,7 @@ visOther:AddToggle("CrosshairEnabled", {
         if v then CrosshairInst:Start() else CrosshairInst:Stop() end
     end,
 })
-visOther:AddSlider("Fov", { Text = "Field of View", Default = 70, Min = 30, Max = 140, Rounding = 0, Callback = function(v) state.Fov = v; setFov(v) end })
+visOther:AddSlider("Fov", { Text = "Field of View", Default = 70, Min = 30, Max = 140, Rounding = 0, Callback = function(v) setFov(v) end })
 
 -- MISC
 local movGroup = Tabs.Misc:AddLeftGroupbox("Movement")
@@ -1671,7 +1660,7 @@ movGroup:AddToggle("BhopEnabled", {
 })
 movGroup:AddSlider("BhopSpeed", { Text = "Bhop Speed", Default = 30, Min = 18, Max = 500, Rounding = 0, Callback = function(v) state.BhopSpeed = v end })
 movGroup:AddToggle("SpeedEnabled", { Text = "Speed Hack", Default = false, Callback = function(v) state.Speed = v; SpeedInst:Apply() end })
-movGroup:AddSlider("SpeedValue", { Text = "Speed Value", Default = 16, Min = 16, Max = 100, Rounding = 0, Callback = function(v) state.SpeedVal = v; SpeedInst:Set(v) end })
+movGroup:AddSlider("SpeedValue", { Text = "Speed Value", Default = 16, Min = 16, Max = 100, Rounding = 0, Callback = function(v) SpeedInst:Set(v) end })
 movGroup:AddToggle("FlyEnabled", {
     Text = "Fly",
     Default = false,
@@ -1726,6 +1715,7 @@ reconButton("Dump Scripts", function() ReconInst:DumpScripts() end)
 reconButton("Dump settings values", function() ReconInst:DumpSettings() end)
 reconButton("Dump PlayerGui", function() ReconInst:DumpGui() end)
 reconButton("Dump Character", function() ReconInst:DumpCharacter() end)
+reconButton("Dump env: 'Animate'", function() ReconInst:DumpEnv("Animate") end)
 reconButton("Full report (console + file)", function()
     local n = ReconInst:FullReport()
     notify("Recon", "Full report: " .. n .. " lines")
