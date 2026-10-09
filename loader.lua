@@ -45,7 +45,8 @@ local state = {
 }
 
 -- ====================== LIBRARY DETECTION ======================
-local hasDrawing = (typeof(Drawing) == "table" and typeof(Drawing.new) == "function")
+-- ponytail: Drawing is a userdata on most executors, not a table — check .new instead
+local hasDrawing = (Drawing ~= nil and type(Drawing.new) == "function")
 
 local function notify(text, color)
     pcall(function()
@@ -143,6 +144,9 @@ function ESP:GetObjects(player)
 end
 
 function ESP:Render()
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
 
@@ -157,8 +161,8 @@ function ESP:Render()
         local topPos = head.Position + Vector3.new(0, 1.3, 0)
         local bottomPos = root.Position - Vector3.new(0, 3.1, 0)
 
-        local top, topVisible = Camera:WorldToScreenPoint(topPos)
-        local bottom, bottomVisible = Camera:WorldToScreenPoint(bottomPos)
+        local top, topVisible = camera:WorldToScreenPoint(topPos)
+        local bottom, bottomVisible = camera:WorldToScreenPoint(bottomPos)
 
         local objects = self:GetObjects(player)
         if not hasDrawing then continue end
