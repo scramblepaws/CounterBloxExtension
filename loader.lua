@@ -20,18 +20,19 @@ local hasDrawing = (Drawing ~= nil and type(Drawing.new) == "function")
 
 -- ====================== THEME ======================
 local Theme = {
-    Accent = Color3.fromRGB(108, 118, 255),
-    AccentDim = Color3.fromRGB(70, 78, 190),
-    Window = Color3.fromRGB(18, 18, 20),
-    Sidebar = Color3.fromRGB(13, 13, 15),
-    Panel = Color3.fromRGB(22, 22, 25),
-    Widget = Color3.fromRGB(30, 30, 34),
-    WidgetHover = Color3.fromRGB(38, 38, 44),
-    Text = Color3.fromRGB(230, 230, 235),
-    TextDim = Color3.fromRGB(140, 140, 150),
-    Section = Color3.fromRGB(120, 125, 150),
-    On = Color3.fromRGB(108, 118, 255),
-    Off = Color3.fromRGB(55, 55, 62),
+    Accent = Color3.fromRGB(84, 134, 255),
+    AccentDim = Color3.fromRGB(40, 70, 140),
+    Window = Color3.fromRGB(8, 8, 10),
+    Sidebar = Color3.fromRGB(5, 5, 6),
+    Header = Color3.fromRGB(11, 11, 13),
+    Panel = Color3.fromRGB(10, 10, 12),
+    Widget = Color3.fromRGB(17, 17, 20),
+    WidgetHover = Color3.fromRGB(25, 25, 30),
+    Text = Color3.fromRGB(238, 238, 242),
+    TextDim = Color3.fromRGB(120, 120, 132),
+    Section = Color3.fromRGB(95, 100, 128),
+    On = Color3.fromRGB(84, 134, 255),
+    Off = Color3.fromRGB(38, 38, 44),
 }
 
 -- ====================== STATE ======================
@@ -108,9 +109,10 @@ function UI:_Build()
     self.Gui.IgnoreGuiInset = true
     self.Gui.Parent = pg
 
+    local W, H = 720, 470
     self.Window = Instance.new("Frame")
-    self.Window.Size = UDim2.new(0, 600, 0, 400)
-    self.Window.Position = UDim2.new(0.5, -300, 0.5, -200)
+    self.Window.Size = UDim2.new(0, W, 0, H)
+    self.Window.Position = UDim2.new(0.5, -W / 2, 0.5, -H / 2)
     self.Window.BackgroundColor3 = Theme.Window
     self.Window.BorderSizePixel = 0
     self.Window.Parent = self.Gui
@@ -119,38 +121,73 @@ function UI:_Build()
     corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = self.Window
 
-    -- sidebar
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(30, 30, 36)
+    stroke.Thickness = 1
+    stroke.Parent = self.Window
+
+    -- draggable header
+    local header = Instance.new("Frame")
+    header.Size = UDim2.new(1, 0, 0, 44)
+    header.BackgroundColor3 = Theme.Header
+    header.BorderSizePixel = 0
+    header.Active = true
+    header.Draggable = true
+    header.Parent = self.Window
+
+    local headerCorner = Instance.new("UICorner")
+    headerCorner.CornerRadius = UDim.new(0, 8)
+    headerCorner.Parent = header
+
+    local headerAccent = Instance.new("Frame")
+    headerAccent.Size = UDim2.new(0, 4, 0, 20)
+    headerAccent.Position = UDim2.new(0, 16, 0.5, -10)
+    headerAccent.BackgroundColor3 = Theme.Accent
+    headerAccent.BorderSizePixel = 0
+    headerAccent.Parent = header
+
+    local headerAccentCorner = Instance.new("UICorner")
+    headerAccentCorner.CornerRadius = UDim.new(0, 2)
+    headerAccentCorner.Parent = headerAccent
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(0, 400, 1, 0)
+    title.Position = UDim2.new(0, 30, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "COUNTER-BLOX"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 17
+    title.TextColor3 = Theme.Text
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = header
+
+    -- close button
+    local close = Instance.new("TextButton")
+    close.Size = UDim2.new(0, 24, 0, 24)
+    close.Position = UDim2.new(1, -34, 0.5, -12)
+    close.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
+    close.BorderSizePixel = 0
+    close.Text = "x"
+    close.Font = Enum.Font.SourceSansBold
+    close.TextColor3 = Color3.new(1, 1, 1)
+    close.TextSize = 14
+    close.Parent = header
+    close.MouseButton1Click:Connect(function() self:Close() end)
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 4)
+    closeCorner.Parent = close
+
+    -- sidebar (below header)
     self.Sidebar = Instance.new("Frame")
-    self.Sidebar.Size = UDim2.new(0, 150, 1, 0)
+    self.Sidebar.Size = UDim2.new(0, 160, 1, -44)
+    self.Sidebar.Position = UDim2.new(0, 0, 0, 44)
     self.Sidebar.BackgroundColor3 = Theme.Sidebar
     self.Sidebar.BorderSizePixel = 0
     self.Sidebar.Parent = self.Window
 
-    local sideCorner = Instance.new("UICorner")
-    sideCorner.CornerRadius = UDim.new(0, 8)
-    sideCorner.Parent = self.Sidebar
-
-    -- title
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 50)
-    title.BackgroundTransparency = 1
-    title.Text = "COUNTER-BLOX"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 16
-    title.TextColor3 = Theme.Text
-    title.Parent = self.Sidebar
-
-    local titleAccent = Instance.new("Frame")
-    titleAccent.Size = UDim2.new(0, 3, 0, 26)
-    titleAccent.Position = UDim2.new(0, 0, 0, 12)
-    titleAccent.BackgroundColor3 = Theme.Accent
-    titleAccent.BorderSizePixel = 0
-    titleAccent.Parent = self.Sidebar
-
-    -- tab list container (below title)
     self.TabContainer = Instance.new("Frame")
-    self.TabContainer.Size = UDim2.new(1, 0, 1, -50)
-    self.TabContainer.Position = UDim2.new(0, 0, 0, 50)
+    self.TabContainer.Size = UDim2.new(1, 0, 1, -12)
+    self.TabContainer.Position = UDim2.new(0, 0, 0, 12)
     self.TabContainer.BackgroundTransparency = 1
     self.TabContainer.Parent = self.Sidebar
 
@@ -158,29 +195,12 @@ function UI:_Build()
     self.TabList.Padding = UDim.new(0, 2)
     self.TabList.Parent = self.TabContainer
 
-    -- content area
+    -- content area (below header, right of sidebar)
     self.Content = Instance.new("Frame")
-    self.Content.Size = UDim2.new(1, -150, 1, 0)
-    self.Content.Position = UDim2.new(0, 150, 0, 0)
+    self.Content.Size = UDim2.new(1, -160, 1, -44)
+    self.Content.Position = UDim2.new(0, 160, 0, 44)
     self.Content.BackgroundTransparency = 1
     self.Content.Parent = self.Window
-
-    -- close button
-    local close = Instance.new("TextButton")
-    close.Size = UDim2.new(0, 24, 0, 24)
-    close.Position = UDim2.new(1, -30, 0, 6)
-    close.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
-    close.BorderSizePixel = 0
-    close.Text = "x"
-    close.Font = Enum.Font.SourceSansBold
-    close.TextColor3 = Color3.new(1, 1, 1)
-    close.TextSize = 14
-    close.Parent = self.Window
-    close.MouseButton1Click:Connect(function() self:Close() end)
-
-    local closeCorner = Instance.new("UICorner")
-    closeCorner.CornerRadius = UDim.new(0, 4)
-    closeCorner.Parent = close
 end
 
 function UI:_Bind()
@@ -820,17 +840,20 @@ function Bhop:Step()
     local character = LocalPlayer.Character
     if not character then return end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local root = character:FindFirstChild("HumanoidRootPart")
-    if not (humanoid and root) then return end
-    if humanoid.MoveDirection.Magnitude <= 0 then return end
-    if humanoid.FloorMaterial == Enum.Material.Air then return end
-    local now = os.clock()
-    if now - self.LastJump < 0.12 then return end
-    local vel = root.AssemblyLinearVelocity
-    local boost = humanoid.MoveDirection.Unit * (humanoid.WalkSpeed * 0.2)
-    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-    root.AssemblyLinearVelocity = Vector3.new(vel.X + boost.X, vel.Y, vel.Z + boost.Z)
-    self.LastJump = now
+    if not humanoid or humanoid.Health <= 0 then return end
+
+    -- only hop while actively moving
+    if humanoid.MoveDirection.Magnitude <= 0 then
+        humanoid.Jump = false
+        return
+    end
+
+    -- hold jump on the ground, release in the air: auto-jumps on every landing
+    if humanoid.FloorMaterial ~= Enum.Material.Air then
+        humanoid.Jump = true
+    else
+        humanoid.Jump = false
+    end
 end
 
 -- ====================== SPEED ======================
