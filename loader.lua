@@ -10,6 +10,10 @@
     Menu key: DELETE
 ]]
 
+local SCRIPT_VERSION = "2.0"
+local LOADER_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"
+local VERSION_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/VERSION"
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -614,21 +618,50 @@ function Ragebot.new()
     self.Connection = nil
     self.LastFire = 0
     self.Circle = {}
+    self.Firing = false
     return self
 end
 
+-- Bind at camera priority so our snap wins over the game's camera script
 function Ragebot:Start()
     if self.Connection then return end
-    self.Connection = RunService.RenderStepped:Connect(function() self:Step() end)
+    RunService:BindToRenderStep("CBXRagebot", Enum.RenderPriority.Camera.Value + 1, function()
+        self:Step()
+    end)
+    self.Connection = true
 end
 
 function Ragebot:Stop()
     if self.Connection then
-        self.Connection:Disconnect()
+        RunService:UnbindFromRenderStep("CBXRagebot")
         self.Connection = nil
     end
+    self:SetFiring(false)
     for _, line in ipairs(self.Circle) do pcall(function() line:Remove() end) end
     self.Circle = {}
+end
+
+function Ragebot:SetFiring(on)
+    if on and not self.Firing then
+        self.Firing = true
+        pcall(function() mouse1press() end)
+    elseif not on and self.Firing then
+        self.Firing = false
+        pcall(function() mouse1release() end)
+    end
+end
+
+function Ragebot:Fire()
+    local now = os.clock()
+    if now - self.LastFire < state.RageDelay then return end
+    self.LastFire = now
+    -- down+up click (works for semi and auto)
+    pcall(function()
+        mouse1press()
+        task.delay(0.02, function()
+            pcall(function() mouse1release() end)
+        end)
+    end)
 end
 
 function Ragebot:getHitbox(character)
@@ -694,22 +727,26 @@ end
 
 function Ragebot:Step()
     self:DrawCircle()
-    if not state.Rage then return end
+    if not state.Rage then
+        self:SetFiring(false)
+        return
+    end
     local camera = workspace.CurrentCamera
     if not camera then return end
 
     local target = self:FindTarget()
-    if not target then return end
+    if not target then
+        self:SetFiring(false)
+        return
+    end
 
-    -- instant snap (no smoothing)
+    -- instant snap (no smoothing); runs on camera priority so it sticks
     camera.CFrame = CFrame.lookAt(camera.CFrame.Position, target.Position)
 
     if state.RageAutoFire and not UserInputService:GetFocusedTextBox() then
-        local now = os.clock()
-        if now - self.LastFire >= state.RageDelay then
-            pcall(function() mouse1click() end)
-            self.LastFire = now
-        end
+        self:Fire()
+    else
+        self:SetFiring(false)
     end
 end
 
@@ -812,16 +849,19 @@ function Bhop:Step()
     if not humanoid or not root or humanoid.Health <= 0 then return end
     if UserInputService:GetFocusedTextBox() then return end
 
-    -- Counter-Blox bhop: hold Space, push horizontal velocity, auto-jump on landing
-    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-        local moveDir = humanoid.MoveDirection
-        if moveDir.Magnitude > 0 then
-            local vel = root.AssemblyLinearVelocity
-            local speed = state.BhopSpeed
-            root.AssemblyLinearVelocity = Vector3.new(moveDir.Unit.X * speed, vel.Y, moveDir.Unit.Z * speed)
-            self.LastVel = root.AssemblyLinearVelocity
+    local speed = state.BhopSpeed
+    local moveDir = humanoid.MoveDirection
+
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) and moveDir.Magnitude > 0 then
+        -- enforce horizontal speed from the slider every frame (ground + air)
+        local unit = moveDir.Unit
+        local vel = root.AssemblyLinearVelocity
+        root.AssemblyLinearVelocity = Vector3.new(unit.X * speed, vel.Y, unit.Z * speed)
+        self.LastVel = Vector3.new(unit.X * speed, 0, unit.Z * speed)
+
+        if humanoid.FloorMaterial ~= Enum.Material.Air then
+            humanoid.Jump = true
         end
-        humanoid.Jump = true
     elseif self.LastVel and humanoid.FloorMaterial == Enum.Material.Air then
         -- keep momentum while airborne after releasing Space
         local vel = root.AssemblyLinearVelocity
@@ -1333,6 +1373,16 @@ function Game:Start()
     end
 end
 
+function Game:Stop()
+    for _, conn in ipairs(self.Connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    self.Connections = {}
+    self.Started = false
+    for _, line in ipairs(self.Lines) do pcall(function() line:Remove() end) end
+    self.Lines = {}
+end
+
 function Game:FlashHit()
     self.HitAlpha = 1
 end
@@ -1451,6 +1501,51 @@ local ReconInst = Recon.new()
 local GameInst = Game.new()
 GameInst:Start()
 
+-- ====================== UPDATER ======================
+local Updater = {}
+
+function Updater:Check()
+    local ok, latest = pcall(function() return game:HttpGet(VERSION_URL) end)
+    if not ok or not latest then return false, nil end
+    latest = latest:gsub("%s+", "")
+    return latest ~= SCRIPT_VERSION, latest
+end
+
+function Updater:Unload()
+    pcall(function() EspInst:Stop() end)
+    pcall(function() AimbotInst:Stop() end)
+    pcall(function() RagebotInst:Stop() end)
+    pcall(function() TriggerInst:Stop() end)
+    pcall(function() BhopInst:Stop() end)
+    pcall(function() FlyInst:Stop() end)
+    pcall(function() CrosshairInst:Stop() end)
+    pcall(function() GameInst:Stop() end)
+    for _, player in ipairs(Players:GetPlayers()) do
+        local c = player.Character
+        local hl = c and c:FindFirstChild("CBXChams")
+        if hl then hl:Destroy() end
+    end
+    pcall(function() Library:Unload() end)
+    pcall(function() getgenv().CBX = nil end)
+end
+
+function Updater:Run()
+    local changed, latest = self:Check()
+    if not changed then
+        notify("Updater", "Already up to date (v" .. SCRIPT_VERSION .. ")")
+        return
+    end
+    notify("Updater", "Updating to v" .. tostring(latest) .. " - reloading...")
+    task.wait(0.75)
+    self:Unload()
+    task.wait(0.3)
+    local ok, err = pcall(function()
+        loadstring(game:HttpGet(LOADER_URL))()
+    end)
+    if not ok then
+        warn("[CBX] Update failed: " .. tostring(err))
+    end
+end
 
 -- ====================== BUILD MENU ======================
 local Window = Library:CreateWindow({
@@ -1660,7 +1755,9 @@ end })
 
 -- UI SETTINGS
 local menuGroup = Tabs["UI Settings"]:AddLeftGroupbox("Menu")
-menuGroup:AddButton({ Text = "Unload", Func = function() Library:Unload() end })
+menuGroup:AddButton({ Text = "Check for updates", Func = function() Updater:Run() end })
+menuGroup:AddLabel("Version v" .. SCRIPT_VERSION)
+menuGroup:AddButton({ Text = "Unload", Func = function() Updater:Unload() end })
 menuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { Default = "Delete", NoUI = true, Text = "Menu keybind" })
 Library.ToggleKeybind = Options.MenuKeybind
 
@@ -1695,6 +1792,8 @@ pcall(function()
         Crosshair = CrosshairInst,
         TextureBug = TextureBugInst,
         Recon = ReconInst,
+        Updater = Updater,
+        Version = SCRIPT_VERSION,
         Game = GameInst,
         Events = game:GetService("ReplicatedStorage"):FindFirstChild("Events"),
     }
