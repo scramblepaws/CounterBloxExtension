@@ -65,6 +65,7 @@ local state = {
 
     -- misc
     Bhop = false,
+    BhopSpeed = 30,
     Speed = false,
     SpeedVal = 16,
     Fly = false,
@@ -577,17 +578,26 @@ function Bhop:Step()
     local character = LocalPlayer.Character
     if not character then return end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return end
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not root or humanoid.Health <= 0 then return end
+    if UserInputService:GetFocusedTextBox() then return end
 
-    if humanoid.MoveDirection.Magnitude <= 0 then
-        humanoid.Jump = false
-        return
-    end
-
-    if humanoid.FloorMaterial ~= Enum.Material.Air then
+    -- Counter-Blox bhop: hold Space, push horizontal velocity, auto-jump on landing
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+        local moveDir = humanoid.MoveDirection
+        if moveDir.Magnitude > 0 then
+            local vel = root.AssemblyLinearVelocity
+            local speed = state.BhopSpeed
+            root.AssemblyLinearVelocity = Vector3.new(moveDir.Unit.X * speed, vel.Y, moveDir.Unit.Z * speed)
+            self.LastVel = root.AssemblyLinearVelocity
+        end
         humanoid.Jump = true
+    elseif self.LastVel and humanoid.FloorMaterial == Enum.Material.Air then
+        -- keep momentum while airborne after releasing Space
+        local vel = root.AssemblyLinearVelocity
+        root.AssemblyLinearVelocity = Vector3.new(self.LastVel.X, vel.Y, self.LastVel.Z)
     else
-        humanoid.Jump = false
+        self.LastVel = nil
     end
 end
 
@@ -909,6 +919,12 @@ moveSection:Toggle({
         state.Bhop = v
         if v then BhopInst:Start() else BhopInst:Stop() end
     end,
+})
+moveSection:Slider({
+    Name = "Bhop Speed",
+    Flag = "BhopSpeed",
+    Min = 18, Max = 500, Default = 30,
+    Callback = function(v) state.BhopSpeed = v end,
 })
 moveSection:Toggle({
     Name = "Speed",
