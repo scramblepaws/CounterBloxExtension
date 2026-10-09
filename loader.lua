@@ -19,40 +19,56 @@ local LocalPlayer = Players.LocalPlayer
 -- ====================== LIBRARY DETECTION ======================
 local hasDrawing = (Drawing ~= nil and type(Drawing.new) == "function")
 
--- ====================== NEVERLOSE UI ======================
-local Library
+-- ====================== LINORIA UI ======================
+local REPO = "https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/"
+local Library, ThemeManager, SaveManager
 do
     local ok, result = pcall(function()
-        return loadstring(game:HttpGet("https://raw.githubusercontent.com/ImInsane-1337/neverlose-ui/refs/heads/main/source/library.lua"))()
+        return loadstring(game:HttpGet(REPO .. "Library.lua"))()
     end)
     if ok and result then
         Library = result
     else
-        warn("[CBX] Failed to load neverlose-ui library")
+        warn("[CBX] Failed to load LinoriaLib")
         return
     end
+    pcall(function() ThemeManager = loadstring(game:HttpGet(REPO .. "addons/ThemeManager.lua"))() end)
+    pcall(function() SaveManager = loadstring(game:HttpGet(REPO .. "addons/SaveManager.lua"))() end)
 end
 
+-- simple standalone notifier (works regardless of library version)
 local function notify(title, desc)
     pcall(function()
-        Library:Notification({ Title = title, Description = desc, Duration = 5 })
+        local pg = LocalPlayer:WaitForChild("PlayerGui")
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "CBXNotify"
+        gui.ResetOnSpawn = false
+        gui.DisplayOrder = 999999
+        gui.Parent = pg
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(0, 320, 0, 40)
+        frame.Position = UDim2.new(0.5, -160, 0, 60)
+        frame.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+        frame.BorderSizePixel = 0
+        frame.Parent = gui
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = frame
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(84, 134, 255)
+        stroke.Parent = frame
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -20, 1, 0)
+        lbl.Position = UDim2.new(0, 10, 0, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = title .. ": " .. desc
+        lbl.Font = Enum.Font.SourceSansSemibold
+        lbl.TextSize = 15
+        lbl.TextColor3 = Color3.fromRGB(235, 235, 240)
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = frame
+        task.delay(4, function() gui:Destroy() end)
     end)
-end
-
--- silence the library's own harmless "SetOpen before defined" warning
-do
-    local origSafeCall = Library.SafeCall
-    Library.SafeCall = function(self, func, ...)
-        local args = table.pack(...)
-        local ok, err = pcall(func, table.unpack(args, 1, args.n))
-        if not ok then
-            local msg = tostring(err)
-            if not msg:find("SetOpen") then
-                warn(err)
-            end
-        end
-        return ok
-    end
 end
 
 -- ====================== STATE ======================
@@ -102,27 +118,47 @@ local function sameTeam(player)
     return myTeam ~= nil and player.Team == myTeam
 end
 
--- ====================== ESP (tulontop/esp-lib.lua) ======================
--- Purpose-built Drawing ESP library: normal/corner boxes, health bars,
--- name tags, distances and tracers, with automatic cleanup.
-local espLib
-do
-    local ok, result = pcall(function()
-        return loadstring(game:HttpGet("https://raw.githubusercontent.com/tulontop/esp-lib.lua/refs/heads/main/source.lua"))()
-    end)
-    if ok and result then
-        espLib = result
-    else
-        warn("[CBX] Failed to load esp-lib")
-    end
-end
-
+-- ====================== ESP (optimized Drawing) ======================
+-- One bounding box per player via Model:GetBoundingBox (8 points total),
+-- instead of projecting every body part's 8 corners each frame.
 local ESP = {}
 ESP.__index = ESP
 
+local FADE_TIME = 0.15
+
+-- returns min, max, onscreen for a character's overall bounding box
+local function projectBox(character)
+    local camera = workspace.CurrentCamera
+    if not camera then return nil end
+
+    local ok, cf, size = pcall(character.GetBoundingBox, character)
+    if not ok or not cf then return nil end
+
+    local hx, hy, hz = size.X / 2, size.Y / 2, size.Z / 2
+    local min = Vector2.new(math.huge, math.huge)
+    local max = Vector2.new(-math.huge, -math.huge)
+    local onscreen = false
+
+    for ix = -1, 1, 2 do
+        for iy = -1, 1, 2 do
+            for iz = -1, 1, 2 do
+                local world = (cf * CFrame.new(hx * ix, hy * iy, hz * iz)).Position
+                local pos, vis = camera:WorldToViewportPoint(world)
+                if vis then
+                    local v = Vector2.new(pos.X, pos.Y)
+                    min = min:Min(v)
+                    max = max:Max(v)
+                    onscreen = true
+                end
+            end
+        end
+    end
+    return min, max, onscreen
+end
+
 function ESP.new()
     local self = setmetatable({}, ESP)
-    self.Added = {}
+    self.Targets = {}
     self.Connection = nil
     return self
 end
@@ -134,65 +170,90 @@ function ESP:IsEnemy(player)
     return true
 end
 
-function ESP:ApplySettings()
-    local e = espLib and getgenv().esplib
-    if not e then return end
-    local on = state.Esp
-    e.box.enabled = on and state.EspBox
-    e.box.type = state.EspBoxType
-    e.box.fill = state.EspColor
-    e.box.outline = Color3.new(0, 0, 0)
-    e.name.enabled = on and state.EspName
-    e.healthbar.enabled = on and state.EspHealth
-    e.distance.enabled = on and state.EspDistance
-    e.tracer.enabled = on and state.EspTracer
+function ESP:CreateObjects()
+    local o = {}
+    if not hasDrawing then return o end
+
+    o.BoxOuter = Drawing.new("Square")
+    o.BoxOuter.Thickness = 3
+    o.BoxOuter.Filled = false
+    o.BoxOuter.Transparency = 0
+    o.BoxOuter.Color = Color3.new(0, 0, 0)
+    o.BoxOuter.Visible = false
+
+    o.BoxInner = Drawing.new("Square")
+    o.BoxInner.Thickness = 1
+    o.BoxInner.Filled = false
+    o.BoxInner.Transparency = 0
+    o.BoxInner.Color = state.EspColor
+    o.BoxInner.Visible = false
+
+    o.Name = Drawing.new("Text")
+    o.Name.Font = Drawing.Fonts.UI
+    o.Name.Size = 13
+    o.Name.Center = true
+    o.Name.Outline = true
+    o.Name.Transparency = 0
+    o.Name.Visible = false
+    o.Name.Color = Color3.new(1, 1, 1)
+
+    o.HealthBg = Drawing.new("Square")
+    o.HealthBg.Filled = true
+    o.HealthBg.Transparency = 0
+    o.HealthBg.Visible = false
+    o.HealthBg.Color = Color3.new(0, 0, 0)
+
+    o.Health = Drawing.new("Square")
+    o.Health.Filled = true
+    o.Health.Transparency = 0
+    o.Health.Visible = false
+    o.Health.Color = Color3.new(0, 1, 0)
+
+    o.Tracer = Drawing.new("Line")
+    o.Tracer.Thickness = 1
+    o.Tracer.Transparency = 0
+    o.Tracer.Visible = false
+    o.Tracer.Color = Color3.new(1, 1, 1)
+
+    o.Distance = Drawing.new("Text")
+    o.Distance.Font = Drawing.Fonts.UI
+    o.Distance.Size = 13
+    o.Distance.Center = true
+    o.Distance.Outline = true
+    o.Distance.Transparency = 0
+    o.Distance.Visible = false
+    o.Distance.Color = Color3.new(1, 1, 1)
+
+    return o
 end
 
-function ESP:AddPlayer(player)
-    if not espLib or player == LocalPlayer then return end
-    if not self:IsEnemy(player) then return end
-    local character = player.Character
-    if not character then return end
-    if self.Added[character] then return end
-    self.Added[character] = true
+function ESP:RemoveObjects(o)
+    for _, d in pairs(o) do pcall(function() d:Remove() end) end
+end
 
-    local ok = pcall(function()
-        espLib.add_box(character)
-        espLib.add_healthbar(character)
-        espLib.add_name(character)
-        espLib.add_distance(character)
-        espLib.add_tracer(character)
-    end)
-    if not ok then
-        self.Added[character] = nil
-    end
+function ESP:SetAlpha(o, a)
+    o.BoxOuter.Transparency = a
+    o.BoxInner.Transparency = a
+    o.Name.Transparency = a
+    o.HealthBg.Transparency = a
+    o.Health.Transparency = a
+    o.Tracer.Transparency = a
+    o.Distance.Transparency = a
+end
+
+function ESP:Hide(o)
+    o.BoxOuter.Visible = false
+    o.BoxInner.Visible = false
+    o.Name.Visible = false
+    o.HealthBg.Visible = false
+    o.Health.Visible = false
+    o.Tracer.Visible = false
+    o.Distance.Visible = false
 end
 
 function ESP:Start()
     if self.Connection then return end
-    self:ApplySettings()
-
-    local function hookPlayer(player)
-        if player ~= LocalPlayer then
-            player.CharacterAdded:Connect(function()
-                task.wait(2)
-                self:AddPlayer(player)
-            end)
-        end
-    end
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        self:AddPlayer(player)
-        hookPlayer(player)
-    end
-    Players.PlayerAdded:Connect(hookPlayer)
-
-    self.Connection = RunService.RenderStepped:Connect(function()
-        self:ApplySettings()
-        for _, player in ipairs(Players:GetPlayers()) do
-            self:AddPlayer(player)
-        end
-    end)
+    self.Connection = RunService.RenderStepped:Connect(function(dt) self:Render(dt) end)
 end
 
 function ESP:Stop()
@@ -200,7 +261,125 @@ function ESP:Stop()
         self.Connection:Disconnect()
         self.Connection = nil
     end
-    self:ApplySettings()
+    self:Clear()
+end
+
+function ESP:Render(dt)
+    if not hasDrawing then return end
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+
+        local target = self.Targets[player]
+        local character = player.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local alive = character and humanoid and humanoid.Health > 0
+        local show = alive and self:IsEnemy(player)
+
+        if show then
+            if not target or target.character ~= character then
+                if target then self:RemoveObjects(target.objects) end
+                target = { character = character, objects = self:CreateObjects(), alpha = 0 }
+                self.Targets[player] = target
+            end
+            target.dead = false
+        elseif target then
+            target.dead = true
+        end
+    end
+
+    for player, target in pairs(self.Targets) do
+        local o = target.objects
+        local step = (dt or 0.016) / FADE_TIME
+
+        if target.dead or not player.Parent then
+            target.alpha = math.max(0, target.alpha - step)
+            if target.alpha <= 0 then
+                self:RemoveObjects(o)
+                self.Targets[player] = nil
+                continue
+            end
+        else
+            target.alpha = math.min(1, target.alpha + step)
+        end
+
+        local min, max, onscreen = projectBox(target.character)
+        if not onscreen then
+            self:Hide(o)
+            continue
+        end
+
+        local width = max.X - min.X
+        local height = max.Y - min.Y
+        local cx = (min.X + max.X) / 2
+        local humanoid = target.character:FindFirstChildOfClass("Humanoid")
+        local health = humanoid and math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1) or 0
+
+        if state.EspBox then
+            o.BoxOuter.Position = min - Vector2.new(1, 1)
+            o.BoxOuter.Size = Vector2.new(width + 2, height + 2)
+            o.BoxOuter.Visible = true
+            o.BoxInner.Position = min
+            o.BoxInner.Size = Vector2.new(width, height)
+            o.BoxInner.Color = state.EspColor
+            o.BoxInner.Visible = true
+        else
+            o.BoxOuter.Visible = false
+            o.BoxInner.Visible = false
+        end
+
+        if state.EspName then
+            o.Name.Text = player.Name
+            o.Name.Position = Vector2.new(cx, min.Y - 15)
+            o.Name.Visible = true
+        else
+            o.Name.Visible = false
+        end
+
+        if state.EspHealth then
+            local barX = min.X - 6
+            o.HealthBg.Position = Vector2.new(barX, min.Y)
+            o.HealthBg.Size = Vector2.new(3, height)
+            o.HealthBg.Visible = true
+            o.Health.Position = Vector2.new(barX, min.Y + height * (1 - health))
+            o.Health.Size = Vector2.new(3, height * health)
+            o.Health.Color = (health > 0.6 and Color3.new(0, 1, 0))
+                or (health > 0.3 and Color3.new(1, 1, 0))
+                or Color3.new(1, 0, 0)
+            o.Health.Visible = true
+        else
+            o.HealthBg.Visible = false
+            o.Health.Visible = false
+        end
+
+        if state.EspTracer then
+            o.Tracer.From = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y)
+            o.Tracer.To = Vector2.new(cx, max.Y)
+            o.Tracer.Visible = true
+        else
+            o.Tracer.Visible = false
+        end
+
+        if state.EspDistance then
+            local dist = (camera.CFrame.Position - target.character:GetPivot().Position).Magnitude
+            o.Distance.Text = tostring(math.floor(dist)) .. "m"
+            o.Distance.Position = Vector2.new(cx, max.Y + 4)
+            o.Distance.Visible = true
+        else
+            o.Distance.Visible = false
+        end
+
+        self:SetAlpha(o, target.alpha)
+    end
+end
+
+function ESP:Clear()
+    for _, target in pairs(self.Targets) do
+        self:RemoveObjects(target.objects)
+    end
+    self.Targets = {}
 end
 
 -- ====================== AIMBOT ======================
@@ -1005,84 +1184,47 @@ local ReconInst = Recon.new()
 local GameInst = Game.new()
 GameInst:Start()
 
+
 -- ====================== BUILD MENU ======================
-Library.Folders = {
-    Directory = "CounterBlox",
-    Configs = "CounterBlox/Configs",
-    Assets = "CounterBlox/Assets",
-}
-
-local Accent = Color3.fromRGB(84, 134, 255)
-Library.Theme.Accent = Accent
-pcall(function()
-    Library:ChangeTheme("Accent", Accent)
-    Library:ChangeTheme("AccentGradient", Color3.fromRGB(40, 70, 160))
-end)
-
-Library.MenuKeybind = tostring(Enum.KeyCode.Delete)
-
-local Window = Library:Window({
-    Name = "Counter-Blox",
-    SubName = "Extension",
+local Window = Library:CreateWindow({
+    Title = "Counter-Blox",
+    Center = true,
+    AutoShow = false,
+    TabPadding = 8,
+    MenuFadeTime = 0.2,
 })
 
-local KeybindList = Library:KeybindList("Keybinds")
+local Tabs = {
+    Rage = Window:AddTab("Rage"),
+    Visuals = Window:AddTab("Visuals"),
+    Misc = Window:AddTab("Misc"),
+    Game = Window:AddTab("Game"),
+    Developer = Window:AddTab("Developer"),
+    ["UI Settings"] = Window:AddTab("UI Settings"),
+}
 
-Window:Category("Main")
-
--- AIMBOT
-local aimPage = Window:Page({ Name = "Aimbot" })
-local aimSection = aimPage:Section({ Name = "Aimbot", Side = 1 })
-
-local aimToggle = aimSection:Toggle({
-    Name = "Enabled",
-    Flag = "AimEnabled",
+-- RAGE
+local aimGroup = Tabs.Rage:AddLeftGroupbox("Aimbot")
+aimGroup:AddToggle("AimEnabled", {
+    Text = "Enabled",
     Default = false,
     Callback = function(v)
         state.Aim = v
         if v then AimbotInst:Start() else AimbotInst:Stop() end
     end,
 })
+aimGroup:AddSlider("AimFov", { Text = "FOV", Default = 120, Min = 30, Max = 360, Rounding = 0, Suffix = "px", Callback = function(v) state.AimFov = v end })
+aimGroup:AddSlider("AimSmooth", { Text = "Smoothness", Default = 4, Min = 1, Max = 30, Rounding = 0, Callback = function(v) state.AimSmooth = v end })
+aimGroup:AddSlider("AimPrediction", { Text = "Prediction", Default = 0, Min = 0, Max = 2, Rounding = 2, Callback = function(v) state.AimPrediction = v end })
+aimGroup:AddDropdown("AimPart", { Text = "Target Part", Values = { "Head", "Torso", "Nearest" }, Default = 1, Callback = function(v) state.AimPart = v end })
+aimGroup:AddToggle("AimTeamCheck", { Text = "Team Check", Default = false, Callback = function(v) state.AimTeamCheck = v end })
+aimGroup:AddToggle("AimVisible", { Text = "Visible Check", Default = false, Callback = function(v) state.AimVisible = v end })
+aimGroup:AddToggle("AimHold", { Text = "Hold RMB", Default = true, Callback = function(v) state.AimHold = v end })
+aimGroup:AddToggle("AimFovCircle", { Text = "FOV Circle", Default = true, Callback = function(v) state.AimFovCircle = v end })
 
-aimSection:Slider({
-    Name = "FOV",
-    Flag = "AimFov",
-    Min = 30, Max = 360, Default = 120,
-    Callback = function(v) state.AimFov = v end,
-})
-
-aimSection:Slider({
-    Name = "Smoothness",
-    Flag = "AimSmooth",
-    Min = 1, Max = 30, Default = 4,
-    Callback = function(v) state.AimSmooth = v end,
-})
-
-aimSection:Slider({
-    Name = "Prediction",
-    Flag = "AimPrediction",
-    Min = 0, Max = 2, Default = 0, Decimals = 2,
-    Callback = function(v) state.AimPrediction = v end,
-})
-
-aimSection:Dropdown({
-    Name = "Target Part",
-    Flag = "AimPart",
-    Items = {"Head", "Torso", "Nearest"},
-    Default = "Head",
-    Multi = false,
-    Callback = function(v) state.AimPart = v end,
-})
-
-aimSection:Toggle({ Name = "Team Check", Flag = "AimTeamCheck", Default = false, Callback = function(v) state.AimTeamCheck = v end })
-aimSection:Toggle({ Name = "Visible Check", Flag = "AimVisible", Default = false, Callback = function(v) state.AimVisible = v end })
-aimSection:Toggle({ Name = "Hold RMB", Flag = "AimHold", Default = true, Callback = function(v) state.AimHold = v end })
-aimSection:Toggle({ Name = "FOV Circle", Flag = "AimFovCircle", Default = true, Callback = function(v) state.AimFovCircle = v end })
-
-local triggerSection = aimPage:Section({ Name = "Triggerbot", Side = 2 })
-triggerSection:Toggle({
-    Name = "Auto Fire",
-    Flag = "TriggerEnabled",
+local triggerGroup = Tabs.Rage:AddRightGroupbox("Triggerbot")
+triggerGroup:AddToggle("TriggerEnabled", {
+    Text = "Auto Fire",
     Default = false,
     Callback = function(v)
         state.Trigger = v
@@ -1091,99 +1233,52 @@ triggerSection:Toggle({
 })
 
 -- VISUALS
-local visPage = Window:Page({ Name = "Visuals" })
-local espSection = visPage:Section({ Name = "ESP", Side = 1 })
-
-espSection:Toggle({
-    Name = "Enabled",
-    Flag = "EspEnabled",
+local espGroup = Tabs.Visuals:AddLeftGroupbox("ESP")
+espGroup:AddToggle("EspEnabled", {
+    Text = "Enabled",
     Default = false,
     Callback = function(v)
         state.Esp = v
         if v then EspInst:Start() else EspInst:Stop() end
     end,
 })
-espSection:Toggle({ Name = "Box", Flag = "EspBox", Default = true, Callback = function(v) state.EspBox = v end })
-espSection:Toggle({ Name = "Name", Flag = "EspName", Default = true, Callback = function(v) state.EspName = v end })
-espSection:Toggle({ Name = "Health", Flag = "EspHealth", Default = true, Callback = function(v) state.EspHealth = v end })
-espSection:Toggle({ Name = "Tracer", Flag = "EspTracer", Default = false, Callback = function(v) state.EspTracer = v end })
-espSection:Toggle({ Name = "Distance", Flag = "EspDistance", Default = false, Callback = function(v) state.EspDistance = v end })
-espSection:Toggle({ Name = "Team Check", Flag = "EspTeamCheck", Default = false, Callback = function(v) state.EspTeamCheck = v end })
-espSection:Dropdown({
-    Name = "Box Style",
-    Flag = "EspBoxType",
-    Items = { "normal", "corner" },
-    Default = "normal",
-    Multi = false,
-    Callback = function(v) state.EspBoxType = v end,
-})
-espSection:Label("Box Color"):Colorpicker({
-    Name = "Color",
-    Flag = "EspColor",
+espGroup:AddToggle("EspBox", { Text = "Box", Default = true, Callback = function(v) state.EspBox = v end })
+espGroup:AddToggle("EspName", { Text = "Name", Default = true, Callback = function(v) state.EspName = v end })
+espGroup:AddToggle("EspHealth", { Text = "Health", Default = true, Callback = function(v) state.EspHealth = v end })
+espGroup:AddToggle("EspTracer", { Text = "Tracer", Default = false, Callback = function(v) state.EspTracer = v end })
+espGroup:AddToggle("EspDistance", { Text = "Distance", Default = false, Callback = function(v) state.EspDistance = v end })
+espGroup:AddToggle("EspTeamCheck", { Text = "Team Check", Default = false, Callback = function(v) state.EspTeamCheck = v end })
+espGroup:AddLabel("Box Color"):AddColorPicker("EspColor", {
     Default = Color3.fromRGB(84, 134, 255),
-    Callback = function(c) state.EspColor = c end,
+    Callback = function(v) state.EspColor = v end,
 })
 
-local otherSection = visPage:Section({ Name = "Other", Side = 2 })
-otherSection:Toggle({
-    Name = "Crosshair",
-    Flag = "CrosshairEnabled",
+local visOther = Tabs.Visuals:AddRightGroupbox("Other")
+visOther:AddToggle("CrosshairEnabled", {
+    Text = "Crosshair",
     Default = false,
     Callback = function(v)
         state.Crosshair = v
         if v then CrosshairInst:Start() else CrosshairInst:Stop() end
     end,
 })
-otherSection:Slider({
-    Name = "Field of View",
-    Flag = "Fov",
-    Min = 30, Max = 140, Default = 70,
-    Callback = function(v)
-        state.Fov = v
-        setFov(v)
-    end,
-})
+visOther:AddSlider("Fov", { Text = "Field of View", Default = 70, Min = 30, Max = 140, Rounding = 0, Callback = function(v) state.Fov = v; setFov(v) end })
 
 -- MISC
-local miscPage = Window:Page({ Name = "Misc" })
-local moveSection = miscPage:Section({ Name = "Movement", Side = 1 })
-
-moveSection:Toggle({
-    Name = "Bunnyhop",
-    Flag = "BhopEnabled",
+local movGroup = Tabs.Misc:AddLeftGroupbox("Movement")
+movGroup:AddToggle("BhopEnabled", {
+    Text = "Bunnyhop",
     Default = false,
     Callback = function(v)
         state.Bhop = v
         if v then BhopInst:Start() else BhopInst:Stop() end
     end,
 })
-moveSection:Slider({
-    Name = "Bhop Speed",
-    Flag = "BhopSpeed",
-    Min = 18, Max = 500, Default = 30,
-    Callback = function(v) state.BhopSpeed = v end,
-})
-moveSection:Toggle({
-    Name = "Speed",
-    Flag = "SpeedEnabled",
-    Default = false,
-    Callback = function(v)
-        state.Speed = v
-        SpeedInst:Apply()
-    end,
-})
-moveSection:Slider({
-    Name = "Speed Value",
-    Flag = "SpeedValue",
-    Min = 16, Max = 100, Default = 16,
-    Callback = function(v)
-        state.SpeedVal = v
-        SpeedInst:Set(v)
-    end,
-})
-moveSection:Toggle({
-    Name = "Fly",
-    Flag = "FlyEnabled",
+movGroup:AddSlider("BhopSpeed", { Text = "Bhop Speed", Default = 30, Min = 18, Max = 500, Rounding = 0, Callback = function(v) state.BhopSpeed = v end })
+movGroup:AddToggle("SpeedEnabled", { Text = "Speed Hack", Default = false, Callback = function(v) state.Speed = v; SpeedInst:Apply() end })
+movGroup:AddSlider("SpeedValue", { Text = "Speed Value", Default = 16, Min = 16, Max = 100, Rounding = 0, Callback = function(v) state.SpeedVal = v; SpeedInst:Set(v) end })
+movGroup:AddToggle("FlyEnabled", {
+    Text = "Fly",
     Default = false,
     Callback = function(v)
         state.Fly = v
@@ -1191,10 +1286,9 @@ moveSection:Toggle({
     end,
 })
 
-local miscOther = miscPage:Section({ Name = "Other", Side = 2 })
-miscOther:Toggle({
-    Name = "Texture Bug",
-    Flag = "TextureBugEnabled",
+local miscOther = Tabs.Misc:AddRightGroupbox("Other")
+miscOther:AddToggle("TextureBugEnabled", {
+    Text = "Texture Bug",
     Default = false,
     Callback = function(v)
         state.TextureBug = v
@@ -1202,21 +1296,24 @@ miscOther:Toggle({
     end,
 })
 
--- DEVELOPER (reverse engineering)
-local devPage = Window:Page({ Name = "Developer" })
-local reconSection = devPage:Section({ Name = "Recon", Side = 1 })
+-- GAME
+local hitGroup = Tabs.Game:AddLeftGroupbox("Hit feedback")
+hitGroup:AddToggle("Hitmarker", { Text = "Hitmarker", Default = false, Callback = function(v) state.Hitmarker = v end })
+hitGroup:AddToggle("KillNotify", { Text = "Kill notifications", Default = false, Callback = function(v) state.KillNotify = v end })
+hitGroup:AddLabel("Driven by ReplicatedStorage.Events")
 
+-- DEVELOPER
+local reconGroup = Tabs.Developer:AddLeftGroupbox("Recon")
 local function reconButton(name, fn)
-    reconSection:Button({
-        Name = name,
-        Callback = function()
+    reconGroup:AddButton({
+        Text = name,
+        Func = function()
             ReconInst:Clear()
             fn()
-            notify(name, "Done - " .. #ReconInst.Lines .. " lines (console)")
+            notify(name, #ReconInst.Lines .. " lines (console)")
         end,
     })
 end
-
 reconButton("Dump Remotes", function() ReconInst:DumpRemotes() end)
 reconButton("Dump Scripts", function() ReconInst:DumpScripts() end)
 reconButton("Dump settings values", function() ReconInst:DumpSettings() end)
@@ -1226,70 +1323,50 @@ reconButton("Full report (console + file)", function()
     local n = ReconInst:FullReport()
     notify("Recon", "Full report: " .. n .. " lines")
 end)
-reconButton("Dump env: 'Animate'", function() ReconInst:DumpEnv("Animate") end)
 
-local gameSection = devPage:Section({ Name = "Game functions", Side = 2 })
+local gameGroup = Tabs.Developer:AddRightGroupbox("Game functions")
 local function gameButton(name, fn)
-    gameSection:Button({
-        Name = name,
-        Callback = function()
+    gameGroup:AddButton({
+        Text = name,
+        Func = function()
             ReconInst:Clear()
             fn()
-            notify(name, "Done - " .. #ReconInst.Lines .. " lines (console)")
+            notify(name, #ReconInst.Lines .. " lines (console)")
         end,
     })
 end
-
 gameButton("Find controller (moveFunc etc)", function() ReconInst:FindController() end)
-gameButton("Find GC key: 'moveFunc'", function() ReconInst:FindGCKey("moveFunc") end)
 gameButton("Dump module envs", function() ReconInst:DumpModuleFunctions() end)
 gameButton("Find callers: FireServer", function() ReconInst:FindGCCallers("FireServer") end)
 gameButton("Find callers: Shoot", function() ReconInst:FindGCCallers("Shoot") end)
-gameButton("Find callers: Remote", function() ReconInst:FindGCCallers("Remote") end)
+gameGroup:AddToggle("ReconRemoteLog", { Text = "Log FireServer calls", Default = false, Callback = function(v)
+    if v ~= ReconInst.Logging then ReconInst:ToggleRemoteLog() end
+end })
+gameGroup:AddToggle("ReconRemoteRecv", { Text = "Log server -> client events", Default = false, Callback = function(v)
+    if v ~= ReconInst.Receiving then ReconInst:ToggleRemoteReceiver() end
+end })
 
-gameSection:Toggle({
-    Name = "Log FireServer calls",
-    Flag = "ReconRemoteLog",
-    Default = false,
-    Callback = function(v)
-        if v ~= ReconInst.Logging then
-            ReconInst:ToggleRemoteLog()
-        end
-    end,
-})
-gameSection:Toggle({
-    Name = "Log server -> client events",
-    Flag = "ReconRemoteRecv",
-    Default = false,
-    Callback = function(v)
-        if v ~= ReconInst.Receiving then
-            ReconInst:ToggleRemoteReceiver()
-        end
-    end,
-})
-gameSection:Label("Output goes to the console")
+-- UI SETTINGS
+local menuGroup = Tabs["UI Settings"]:AddLeftGroupbox("Menu")
+menuGroup:AddButton("Unload", function() Library:Unload() end)
+menuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { Default = "Delete", NoUI = true, Text = "Menu keybind" })
+Library.ToggleKeybind = Options.MenuKeybind
 
--- GAME (reverse-engineered event features)
-local gamePage = Window:Page({ Name = "Game" })
-local hitSection = gamePage:Section({ Name = "Hit feedback", Side = 1 })
-hitSection:Toggle({
-    Name = "Hitmarker",
-    Flag = "Hitmarker",
-    Default = false,
-    Callback = function(v) state.Hitmarker = v end,
-})
-hitSection:Toggle({
-    Name = "Kill notifications",
-    Flag = "KillNotify",
-    Default = false,
-    Callback = function(v) state.KillNotify = v end,
-})
-hitSection:Label("Driven by ReplicatedStorage.Events.HatObject / CreateRagdoll")
+if ThemeManager then
+    ThemeManager:SetLibrary(Library)
+    ThemeManager:SetFolder("CounterBlox")
+    ThemeManager:ApplyToTab(Tabs["UI Settings"])
+end
+if SaveManager then
+    SaveManager:SetLibrary(Library)
+    SaveManager:IgnoreThemeSettings()
+    SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+    SaveManager:SetFolder("CounterBlox/configs")
+    SaveManager:BuildConfigSection(Tabs["UI Settings"])
+end
 
--- Settings (scale, configs, watermark) + init
-Window:Category("Settings")
-Library:CreateSettingsPage(Window, KeybindList)
-Window:Init()
+Library:SetWatermarkVisibility(true)
+Library:SetWatermark("Counter-Blox")
 
 -- ====================== EXPOSE ======================
 pcall(function()
@@ -1307,14 +1384,7 @@ pcall(function()
         Recon = ReconInst,
         Game = GameInst,
         Events = game:GetService("ReplicatedStorage"):FindFirstChild("Events"),
-        EspLib = espLib,
     }
 end)
 
-pcall(function()
-    Library:Notification({
-        Title = "Counter-Blox",
-        Description = "Loaded. Press DELETE to open the menu.",
-        Duration = 6,
-    })
-end)
+notify("Counter-Blox", "Loaded. Press DELETE for the menu.")
