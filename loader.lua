@@ -10,7 +10,7 @@
     Menu key: DELETE
 ]]
 
-local SCRIPT_VERSION = "2.2"
+local SCRIPT_VERSION = "2.3"
 local LOADER_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"
 local VERSION_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/VERSION"
 
@@ -1510,6 +1510,195 @@ function Game:Render(dt)
     end
 end
 
+-- ====================== MOVEMENT EXTRAS ======================
+-- Techniques ported from Counter-Blox movement cheats (pivo.ware):
+-- noclip, airstuck, edgebug, pixelsurf, jumpbug, auto-strafe.
+local Extras = {}
+Extras.__index = Extras
+
+function Extras.new()
+    local self = setmetatable({}, Extras)
+    self.Connection = nil
+    self.StrafeConnection = nil
+    self.SurfVel = nil
+    self.NoclipCache = nil
+    self.NoclipCharacter = nil
+    self.NoClip = false
+    self.AirStuck = false
+    self.PixelSurf = false
+    self.Edgebug = false
+    self.Jumpbug = false
+    self.JumpbugHeight = 2.5
+    self.AutoStrafe = false
+    self.AirAccel = 2
+    self.EdgebugDebounce = false
+    return self
+end
+
+function Extras:Start()
+    if self.Connection then return end
+    self.Connection = RunService.Stepped:Connect(function() self:Step() end)
+    self.StrafeConnection = UserInputService.InputChanged:Connect(function(input) self:OnMouseMove(input) end)
+end
+
+function Extras:Stop()
+    if self.Connection then self.Connection:Disconnect() self.Connection = nil end
+    if self.StrafeConnection then self.StrafeConnection:Disconnect() self.StrafeConnection = nil end
+    self.NoClip = false
+    self.AirStuck = false
+    self.PixelSurf = false
+    self:RestoreNoclip()
+    if self.SurfVel then self.SurfVel:Destroy() self.SurfVel = nil end
+end
+
+function Extras:Character()
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if character and humanoid and root and humanoid.Health > 0 then
+        return character, humanoid, root
+    end
+    return nil
+end
+
+-- poll the Linoria keypickers (Hold mode)
+function Extras:ReadBinds()
+    local O = Options
+    if not O then return end
+    if O.NoclipBind then self.NoClip = O.NoclipBind:GetState() end
+    if O.AirstuckBind then self.AirStuck = O.AirstuckBind:GetState() end
+    if O.EdgebugBind then self.Edgebug = O.EdgebugBind:GetState() end
+    if O.PixelsurfBind then self.PixelSurf = O.PixelsurfBind:GetState() end
+    if O.JumpbugBind then self.Jumpbug = O.JumpbugBind:GetState() end
+end
+
+function Extras:CaptureNoclip(character)
+    if self.NoclipCharacter == character and self.NoclipCache then return end
+    self.NoclipCharacter = character
+    self.NoclipCache = {}
+    for _, name in ipairs({ "Head", "UpperTorso", "LowerTorso", "HumanoidRootPart" }) do
+        local part = character:FindFirstChild(name)
+        if part then
+            self.NoclipCache[part] = part.CanCollide
+        end
+    end
+end
+
+function Extras:RestoreNoclip()
+    if not self.NoclipCache then return end
+    for part, collide in pairs(self.NoclipCache) do
+        if part.Parent then part.CanCollide = collide end
+    end
+    self.NoclipCache = nil
+    self.NoclipCharacter = nil
+end
+
+function Extras:IsTouchingWall(character, root)
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = { character }
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    local origin = root.Position
+    for _, dir in ipairs({ root.CFrame.RightVector, -root.CFrame.RightVector, root.CFrame.LookVector, -root.CFrame.LookVector }) do
+        if workspace:Raycast(origin, dir * 2, params) then return true end
+    end
+    return false
+end
+
+function Extras:UpdateSurf(character, root)
+    if not self.PixelSurf then
+        if self.SurfVel then
+            self.SurfVel.MaxForce = Vector3.new()
+            self.SurfVel.Parent = nil
+        end
+        return
+    end
+    if not self.SurfVel then
+        self.SurfVel = Instance.new("BodyVelocity")
+    end
+    if self:IsTouchingWall(character, root) then
+        self.SurfVel.MaxForce = Vector3.new(1500, 1500, 1500)
+        self.SurfVel.Velocity = Vector3.new()
+        self.SurfVel.Parent = root
+    else
+        self.SurfVel.MaxForce = Vector3.new()
+        self.SurfVel.Parent = nil
+    end
+end
+
+function Extras:TryEdgebug(humanoid, root)
+    if humanoid:GetState() ~= Enum.HumanoidStateType.Landed then return end
+    self.EdgebugDebounce = true
+    task.spawn(function()
+        local vel = root.AssemblyLinearVelocity
+        root.AssemblyLinearVelocity = Vector3.new(vel.X * 1.8, -7, vel.Z * 1.8)
+        task.wait()
+        local saved = root.AssemblyLinearVelocity
+        for _ = 1, 4 do
+            task.wait()
+            root.AssemblyLinearVelocity = saved - Vector3.new(0, 2, 0)
+        end
+        task.wait()
+        root.AssemblyLinearVelocity = root.AssemblyLinearVelocity * Vector3.new(1.8, 1, 1.8)
+        task.wait(0.2)
+        self.EdgebugDebounce = false
+    end)
+end
+
+function Extras:OnMouseMove(input)
+    if not self.AutoStrafe then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+    local character, humanoid = self:Character()
+    if not character then return end
+    local st = humanoid:GetState()
+    if st ~= Enum.HumanoidStateType.Freefall and st ~= Enum.HumanoidStateType.Jumping then return end
+
+    local delta = input.Delta.X
+    local strafeKey = (delta < 0 and UserInputService:IsKeyDown(Enum.KeyCode.A))
+        or (delta > 0 and UserInputService:IsKeyDown(Enum.KeyCode.D))
+    if strafeKey then
+        local gain = math.abs(delta) / 25 * self.AirAccel
+        humanoid.WalkSpeed = math.clamp(humanoid.WalkSpeed + gain, 0, 120)
+    end
+end
+
+function Extras:Step()
+    self:ReadBinds()
+
+    local character, humanoid, root = self:Character()
+    if not character then return end
+
+    -- Noclip
+    if self.NoClip then
+        self:CaptureNoclip(character)
+        for part in pairs(self.NoclipCache) do
+            part.CanCollide = false
+        end
+    elseif self.NoclipCache then
+        self:RestoreNoclip()
+    end
+
+    -- Airstuck
+    if self.AirStuck then
+        root.Anchored = true
+        root.AssemblyLinearVelocity = Vector3.new()
+    elseif root.Anchored then
+        root.Anchored = false
+    end
+
+    -- Jumpbug
+    if self.Jumpbug then
+        humanoid.JumpHeight = self.JumpbugHeight
+    end
+
+    -- Pixelsurf
+    self:UpdateSurf(character, root)
+
+    -- Edgebug
+    if self.Edgebug and not self.EdgebugDebounce then
+        self:TryEdgebug(humanoid, root)
+    end
+end
+
 -- ====================== INSTANCES ======================
 local EspInst = ESP.new()
 local AimbotInst = Aimbot.new()
@@ -1523,6 +1712,8 @@ local TextureBugInst = setmetatable({}, TextureBug)
 local ReconInst = Recon.new()
 local GameInst = Game.new()
 GameInst:Start()
+local ExtrasInst = Extras.new()
+ExtrasInst:Start()
 
 -- ====================== UPDATER ======================
 local Updater = {}
@@ -1714,6 +1905,17 @@ miscOther:AddToggle("TextureBugEnabled", {
     end,
 })
 
+-- Movement+ (techniques from Counter-Blox movement cheats)
+local moveExtra = Tabs.Misc:AddRightGroupbox("Movement+")
+moveExtra:AddLabel("Noclip"):AddKeyPicker("NoclipBind", { Default = "V", Mode = "Hold", Text = "Noclip (hold)" })
+moveExtra:AddLabel("Airstuck"):AddKeyPicker("AirstuckBind", { Default = "C", Mode = "Hold", Text = "Airstuck (hold)" })
+moveExtra:AddLabel("Edgebug"):AddKeyPicker("EdgebugBind", { Default = "E", Mode = "Hold", Text = "Edgebug (hold)" })
+moveExtra:AddLabel("Pixelsurf"):AddKeyPicker("PixelsurfBind", { Default = "F", Mode = "Hold", Text = "Pixelsurf (hold)" })
+moveExtra:AddLabel("Jumpbug"):AddKeyPicker("JumpbugBind", { Default = "G", Mode = "Hold", Text = "Jumpbug (hold)" })
+moveExtra:AddSlider("JumpbugHeight", { Text = "Jumpbug Height", Default = 2.5, Min = 2, Max = 4, Rounding = 2, Callback = function(v) ExtrasInst.JumpbugHeight = v end })
+moveExtra:AddToggle("AutoStrafe", { Text = "Auto Strafe", Default = false, Callback = function(v) ExtrasInst.AutoStrafe = v end })
+moveExtra:AddSlider("AirAccel", { Text = "Air Acceleration", Default = 2, Min = 0, Max = 6, Rounding = 1, Callback = function(v) ExtrasInst.AirAccel = v end })
+
 -- GAME
 local hitGroup = Tabs.Game:AddLeftGroupbox("Hit feedback")
 hitGroup:AddToggle("Hitmarker", { Text = "Hitmarker", Default = false, Callback = function(v) state.Hitmarker = v end })
@@ -1816,6 +2018,7 @@ pcall(function()
         Crosshair = CrosshairInst,
         TextureBug = TextureBugInst,
         Recon = ReconInst,
+        Extras = ExtrasInst,
         Updater = Updater,
         Version = SCRIPT_VERSION,
         Game = GameInst,
