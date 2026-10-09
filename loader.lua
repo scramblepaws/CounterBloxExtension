@@ -10,7 +10,7 @@
     Menu key: DELETE
 ]]
 
-local SCRIPT_VERSION = "2.1"
+local SCRIPT_VERSION = "2.2"
 local LOADER_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"
 local VERSION_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/VERSION"
 
@@ -615,65 +615,55 @@ function Aimbot:DrawCircle()
 end
 
 -- ====================== RAGEBOT ======================
--- Instant-snap aim + auto fire. Picks a hitbox, prioritises by FOV or distance,
--- optionally shoots through walls, and fires at a configurable interval.
+-- Instant-snap aim + auto fire. Aims at a chosen hitbox (HeadHB on Counter-Blox),
+-- prioritises by FOV or distance, optionally shoots through walls.
 local Ragebot = {}
 Ragebot.__index = Ragebot
 
+Ragebot.BIND = "CBXRagebot"
+
 function Ragebot.new()
     local self = setmetatable({}, Ragebot)
-    self.Connection = nil
+    self.Running = false
     self.LastFire = 0
     self.Circle = {}
+    self.Locked = false
     return self
 end
 
--- Bind above the camera (and above the legit aimbot) so our snap always wins
 function Ragebot:Start()
-    if self.Connection then return end
-    RunService:BindToRenderStep("CBXRagebot", Enum.RenderPriority.Camera.Value + 2, function()
+    if self.Running then return end
+    self.Running = true
+    -- camera priority so our snap wins over the game's camera update
+    RunService:BindToRenderStep(Ragebot.BIND, Enum.RenderPriority.Camera.Value + 1, function()
         self:Step()
     end)
-    self.Connection = true
 end
 
 function Ragebot:Stop()
-    if self.Connection then
-        RunService:UnbindFromRenderStep("CBXRagebot")
-        self.Connection = nil
-    end
+    if not self.Running then return end
+    self.Running = false
+    RunService:UnbindFromRenderStep(Ragebot.BIND)
+    self.Locked = false
     for _, line in ipairs(self.Circle) do pcall(function() line:Remove() end) end
     self.Circle = {}
 end
 
-function Ragebot:Fire()
-    local now = os.clock()
-    if now - self.LastFire < state.RageDelay then return end
-    self.LastFire = now
-    -- prefer the full-click helper; fall back to press/release
-    if type(mouse1click) == "function" then
-        pcall(mouse1click)
-    elseif type(mouse1press) == "function" and type(mouse1release) == "function" then
-        pcall(mouse1press)
-        task.delay(0.02, function()
-            pcall(mouse1release)
-        end)
-    end
-end
-
-function Ragebot:getHitbox(character)
-    local which = state.RageHitbox
-    if which == "Head" then
+function Ragebot:Hitbox(player)
+    local character = player.Character
+    if not character then return nil end
+    local cfg = state.RageHitbox
+    if cfg == "Head" then
         return character:FindFirstChild("HeadHB") or character:FindFirstChild("Head")
-    elseif which == "Torso" then
+    elseif cfg == "Torso" then
         return character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
-    elseif which == "Body" then
+    elseif cfg == "Body" then
         return character:FindFirstChild("LowerTorso") or character:FindFirstChild("HumanoidRootPart")
     end
     return character:FindFirstChild("HeadHB") or character:FindFirstChild("Head")
 end
 
-function Ragebot:isVisible(character, part)
+function Ragebot:Visible(character, part)
     local camera = workspace.CurrentCamera
     if not camera then return false end
     local params = RaycastParams.new()
@@ -686,25 +676,22 @@ function Ragebot:isVisible(character, part)
     return result.Instance:IsDescendantOf(character)
 end
 
-function Ragebot:FindTarget()
-    local camera = workspace.CurrentCamera
-    if not camera then return nil end
+function Ragebot:FindTarget(camera)
     local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
-
     local bestPart, bestScore = nil, math.huge
+
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and not (state.RageTeamCheck and sameTeam(player)) then
             local character = player.Character
             local humanoid = character and character:FindFirstChildOfClass("Humanoid")
             if character and humanoid and humanoid.Health > 0 then
-                local part = self:getHitbox(character)
+                local part = self:Hitbox(player)
                 if part then
                     local pos, onScreen = camera:WorldToScreenPoint(part.Position)
                     if onScreen then
                         local screenDist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
                         if screenDist <= state.RageFov then
-                            local visible = self:isVisible(character, part)
-                            if visible or state.RageWallbang then
+                            if state.RageWallbang or self:Visible(character, part) then
                                 local score = (state.RagePriority == "Distance")
                                     and (camera.CFrame.Position - part.Position).Magnitude
                                     or screenDist
@@ -722,16 +709,37 @@ function Ragebot:FindTarget()
     return bestPart
 end
 
+function Ragebot:Fire()
+    local now = os.clock()
+    if now - self.LastFire < state.RageDelay then return end
+    self.LastFire = now
+    if type(mouse1click) == "function" then
+        pcall(mouse1click)
+    elseif type(mouse1press) == "function" then
+        pcall(mouse1press)
+        task.delay(0.02, function()
+            if type(mouse1release) == "function" then pcall(mouse1release) end
+        end)
+    end
+end
+
 function Ragebot:Step()
-    self:DrawCircle()
-    if not state.Rage then return end
     local camera = workspace.CurrentCamera
     if not camera then return end
 
-    local target = self:FindTarget()
+    if not state.Rage then
+        self.Locked = false
+        self:DrawCircle(camera)
+        return
+    end
+
+    local target = self:FindTarget(camera)
+    self.Locked = target ~= nil
+    self:DrawCircle(camera)
+
     if not target then return end
 
-    -- instant snap (no smoothing); runs on camera priority so it sticks
+    -- instant snap
     camera.CFrame = CFrame.lookAt(camera.CFrame.Position, target.Position)
 
     if state.RageAutoFire and not UserInputService:GetFocusedTextBox() then
@@ -739,20 +747,19 @@ function Ragebot:Step()
     end
 end
 
-function Ragebot:DrawCircle()
+function Ragebot:DrawCircle(camera)
     if not hasDrawing then return end
-    local camera = workspace.CurrentCamera
-    if not camera then return end
     local show = state.Rage and state.RageFovCircle
     local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
     local radius = state.RageFov
+    local color = self.Locked and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(255, 255, 255)
+
     for i = 1, CIRCLE_SEGMENTS do
         local line = self.Circle[i]
         if not line then
             line = Drawing.new("Line")
             line.Thickness = 1
             line.Transparency = 1
-            line.Color = Color3.fromRGB(255, 60, 60)
             line.Visible = false
             self.Circle[i] = line
         end
@@ -760,6 +767,7 @@ function Ragebot:DrawCircle()
         if show then
             local a1 = (i / CIRCLE_SEGMENTS) * math.pi * 2
             local a2 = (((i % CIRCLE_SEGMENTS) + 1) / CIRCLE_SEGMENTS) * math.pi * 2
+            line.Color = color
             line.From = center + Vector2.new(math.cos(a1), math.sin(a1)) * radius
             line.To = center + Vector2.new(math.cos(a2), math.sin(a2)) * radius
         end
@@ -838,26 +846,26 @@ function Bhop:Step()
     if not humanoid or not root or humanoid.Health <= 0 then return end
     if UserInputService:GetFocusedTextBox() then return end
 
-    local speed = state.BhopSpeed
+    -- only bhop while holding Space and actively moving
+    if not UserInputService:IsKeyDown(Enum.KeyCode.Space) then return end
     local moveDir = humanoid.MoveDirection
+    if moveDir.Magnitude <= 0 then return end
 
-    if UserInputService:IsKeyDown(Enum.KeyCode.Space) and moveDir.Magnitude > 0 then
-        -- enforce horizontal speed from the slider every frame (ground + air)
-        local unit = moveDir.Unit
-        local vel = root.AssemblyLinearVelocity
-        root.AssemblyLinearVelocity = Vector3.new(unit.X * speed, vel.Y, unit.Z * speed)
-        self.LastVel = Vector3.new(unit.X * speed, 0, unit.Z * speed)
+    local speed = state.BhopSpeed
+    local unit = moveDir.Unit
+    local airborne = humanoid:GetState() == Enum.HumanoidStateType.Freefall
 
-        if humanoid.FloorMaterial ~= Enum.Material.Air then
-            humanoid.Jump = true
-        end
-    elseif self.LastVel and humanoid.FloorMaterial == Enum.Material.Air then
-        -- keep momentum while airborne after releasing Space
-        local vel = root.AssemblyLinearVelocity
-        root.AssemblyLinearVelocity = Vector3.new(self.LastVel.X, vel.Y, self.LastVel.Z)
-    else
-        self.LastVel = nil
+    -- auto-jump the instant we touch the ground
+    if not airborne then
+        humanoid.Jump = true
     end
+
+    -- push horizontal speed (slider value), keep vertical momentum
+    root.AssemblyLinearVelocity = Vector3.new(
+        unit.X * speed,
+        root.AssemblyLinearVelocity.Y,
+        unit.Z * speed
+    )
 end
 
 -- ====================== SPEED ======================
@@ -890,8 +898,9 @@ Fly.__index = Fly
 function Fly.new()
     local self = setmetatable({}, Fly)
     self.Connection = nil
-    self.BodyGyro = nil
-    self.BodyVel = nil
+    self.Gyro = nil
+    self.Vel = nil
+    self.Speed = 60
     return self
 end
 
@@ -902,26 +911,32 @@ function Fly:Start()
     local root = character:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    self.BodyGyro = Instance.new("BodyGyro")
-    self.BodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-    self.BodyGyro.P = 9000
-    self.BodyGyro.D = 100
-    self.BodyGyro.Parent = root
+    -- PlatformStand stops the Humanoid from fighting the BodyMovers
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then humanoid.PlatformStand = true end
 
-    self.BodyVel = Instance.new("BodyVelocity")
-    self.BodyVel.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-    self.BodyVel.Velocity = Vector3.new(0, 0, 0)
-    self.BodyVel.Parent = root
+    self.Gyro = Instance.new("BodyGyro")
+    self.Gyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    self.Gyro.P = 1e4
+    self.Gyro.D = 200
+    self.Gyro.Parent = root
+
+    self.Vel = Instance.new("BodyVelocity")
+    self.Vel.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    self.Vel.Velocity = Vector3.new(0, 0, 0)
+    self.Vel.Parent = root
 
     self.Connection = RunService.RenderStepped:Connect(function() self:Step() end)
 end
 
 function Fly:Step()
-    if not (self.BodyVel and self.BodyGyro) then return end
+    local character = LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not (root and self.Vel and self.Gyro) then return end
     local camera = workspace.CurrentCamera
     if not camera then return end
 
-    self.BodyGyro.CFrame = camera.CFrame
+    self.Gyro.CFrame = camera.CFrame
 
     local dir = Vector3.new(0, 0, 0)
     if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + camera.CFrame.LookVector end
@@ -929,13 +944,9 @@ function Fly:Step()
     if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - camera.CFrame.RightVector end
     if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + camera.CFrame.RightVector end
     if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0, 1, 0) end
-    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0, 1, 0) end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then dir = dir - Vector3.new(0, 1, 0) end
 
-    if dir.Magnitude > 0 then
-        self.BodyVel.Velocity = dir.Unit * 50
-    else
-        self.BodyVel.Velocity = Vector3.new(0, 0, 0)
-    end
+    self.Vel.Velocity = dir.Magnitude > 0 and dir.Unit * self.Speed or Vector3.new(0, 0, 0)
 end
 
 function Fly:Stop()
@@ -943,8 +954,11 @@ function Fly:Stop()
         self.Connection:Disconnect()
         self.Connection = nil
     end
-    if self.BodyGyro then self.BodyGyro:Destroy() self.BodyGyro = nil end
-    if self.BodyVel then self.BodyVel:Destroy() self.BodyVel = nil end
+    if self.Vel then self.Vel:Destroy() self.Vel = nil end
+    if self.Gyro then self.Gyro:Destroy() self.Gyro = nil end
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid then humanoid.PlatformStand = false end
 end
 
 -- ====================== CROSSHAIR ======================
@@ -1345,13 +1359,18 @@ function Game:Start()
         end
     end)
 
-    -- kills
-    self:On("CreateRagdoll", function(_, victim)
+    -- kills: AddToKillfeed carries { killer, victim, weapon, ... }
+    self:On("AddToKillfeed", function(data)
+        if type(data) ~= "table" then return end
+        local killer = data.killer or data.Killer or data.killerName or data.killername
+        local victim = data.victim or data.Victim or data.victimName or data.victimname
+        if killer ~= LocalPlayer.Name then return end
+
         if state.KillNotify and victim then
-            notify("Kill", tostring(victim) .. " was killed")
+            notify("Kill", "You killed " .. tostring(victim))
         end
         if state.KillEffect then
-            self:SpawnKillEffect()
+            self:SpawnKillEffect(victim)
         end
     end)
 
@@ -1376,8 +1395,23 @@ function Game:FlashHit()
     self.HitAlpha = 1
 end
 
-function Game:SpawnKillEffect()
-    local pos = self.LastHitPos
+function Game:SpawnKillEffect(victimName)
+    -- prefer the victim's own position, fall back to the last bullet impact
+    local pos
+    if victimName then
+        local victim = Players:FindFirstChild(victimName)
+        local character = victim and victim.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if root then pos = root.Position end
+        if not pos then
+            local model = workspace:FindFirstChild(victimName)
+            if model and model:IsA("Model") then
+                local part = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+                if part then pos = part.Position end
+            end
+        end
+    end
+    pos = pos or self.LastHitPos
     if not pos then return end
 
     local part = Instance.new("Part")
