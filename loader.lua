@@ -780,10 +780,11 @@ pcall(function()
     Library:ChangeTheme("AccentGradient", Color3.fromRGB(40, 70, 160))
 end)
 
+Library.MenuKeybind = tostring(Enum.KeyCode.Delete)
+
 local Window = Library:Window({
     Name = "Counter-Blox",
     SubName = "Extension",
-    MenuKeybind = Enum.KeyCode.Delete,
 })
 
 local KeybindList = Library:KeybindList("Keybinds")
@@ -804,28 +805,28 @@ local aimToggle = aimSection:Toggle({
     end,
 })
 
-aimToggle:Slider({
+aimSection:Slider({
     Name = "FOV",
     Flag = "AimFov",
     Min = 30, Max = 360, Default = 120,
     Callback = function(v) state.AimFov = v end,
 })
 
-aimToggle:Slider({
+aimSection:Slider({
     Name = "Smoothness",
     Flag = "AimSmooth",
     Min = 1, Max = 30, Default = 4,
     Callback = function(v) state.AimSmooth = v end,
 })
 
-aimToggle:Slider({
+aimSection:Slider({
     Name = "Prediction",
     Flag = "AimPrediction",
     Min = 0, Max = 2, Default = 0, Decimals = 2,
     Callback = function(v) state.AimPrediction = v end,
 })
 
-aimToggle:Dropdown({
+aimSection:Dropdown({
     Name = "Target Part",
     Flag = "AimPart",
     Items = {"Head", "Torso", "Nearest"},
