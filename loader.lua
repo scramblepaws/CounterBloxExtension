@@ -2,6 +2,8 @@
     Counter-Blox Extension
     Single-file Roblox script.
 
+    Menu: neverlose-ui (https://github.com/ImInsane-1337/neverlose-ui)
+
     Load with:
     loadstring(game:HttpGet("https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"))()
 
@@ -11,466 +13,51 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 
 -- ====================== LIBRARY DETECTION ======================
 local hasDrawing = (Drawing ~= nil and type(Drawing.new) == "function")
 
--- ====================== THEME ======================
-local Theme = {
-    Accent = Color3.fromRGB(84, 134, 255),
-    AccentDim = Color3.fromRGB(40, 70, 140),
-    Window = Color3.fromRGB(8, 8, 10),
-    Sidebar = Color3.fromRGB(5, 5, 6),
-    Header = Color3.fromRGB(11, 11, 13),
-    Panel = Color3.fromRGB(10, 10, 12),
-    Widget = Color3.fromRGB(17, 17, 20),
-    WidgetHover = Color3.fromRGB(25, 25, 30),
-    Text = Color3.fromRGB(238, 238, 242),
-    TextDim = Color3.fromRGB(120, 120, 132),
-    Section = Color3.fromRGB(95, 100, 128),
-    On = Color3.fromRGB(84, 134, 255),
-    Off = Color3.fromRGB(38, 38, 44),
-}
+-- ====================== NEVERLOSE UI ======================
+local Library
+do
+    local ok, result = pcall(function()
+        return loadstring(game:HttpGet("https://raw.githubusercontent.com/ImInsane-1337/neverlose-ui/refs/heads/main/source/library.lua"))()
+    end)
+    if ok and result then
+        Library = result
+    else
+        warn("[CBX] Failed to load neverlose-ui library")
+        return
+    end
+end
+
+Library.LogsEnabled = true
 
 -- ====================== STATE ======================
 local state = {
-    -- aimbot
     Aim = false,
     AimFov = 120,
     AimSmooth = 8,
-    AimKey = "LMB",
-    -- triggerbot
     Trigger = false,
-    -- visuals
+
     Esp = false,
     EspBox = true,
     EspName = true,
     EspHealth = true,
     EspTracer = false,
     EspDistance = false,
+    EspColor = Color3.fromRGB(84, 134, 255),
     Crosshair = false,
     Fov = 70,
-    -- misc
+
     Bhop = false,
     Speed = false,
     SpeedVal = 16,
     Fly = false,
     TextureBug = false,
 }
-
--- ====================== NOTIFY ======================
-local function notify(text, color)
-    pcall(function()
-        local gui = Instance.new("ScreenGui")
-        gui.Name = "CBXNotify"
-        gui.ResetOnSpawn = false
-        gui.DisplayOrder = 999999
-        gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(0, 320, 0, 26)
-        label.Position = UDim2.new(0.5, -160, 0, 8)
-        label.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
-        label.BackgroundTransparency = 0.15
-        label.TextColor3 = color or Color3.fromRGB(120, 255, 120)
-        label.Text = text
-        label.Font = Enum.Font.SourceSansBold
-        label.TextSize = 14
-        label.Parent = gui
-        task.delay(5, function() gui:Destroy() end)
-    end)
-end
-
--- ====================== UI (gamesense-style) ======================
-local UI = {}
-UI.__index = UI
-
-function UI.new()
-    local self = setmetatable({}, UI)
-    self.IsOpen = false
-    self.Tabs = {}
-    self.ActiveTab = nil
-    self:_Build()
-    self:_Bind()
-    return self
-end
-
-function UI:_Build()
-    local pg = LocalPlayer:WaitForChild("PlayerGui")
-
-    self.Gui = Instance.new("ScreenGui")
-    self.Gui.Name = "CBXMenu"
-    self.Gui.ResetOnSpawn = false
-    self.Gui.Enabled = false
-    self.Gui.DisplayOrder = 99999
-    self.Gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-    self.Gui.IgnoreGuiInset = true
-    self.Gui.Parent = pg
-
-    local W, H = 720, 470
-    self.Window = Instance.new("Frame")
-    self.Window.Size = UDim2.new(0, W, 0, H)
-    self.Window.Position = UDim2.new(0.5, -W / 2, 0.5, -H / 2)
-    self.Window.BackgroundColor3 = Theme.Window
-    self.Window.BorderSizePixel = 0
-    self.Window.Parent = self.Gui
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = self.Window
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(30, 30, 36)
-    stroke.Thickness = 1
-    stroke.Parent = self.Window
-
-    -- draggable header
-    local header = Instance.new("Frame")
-    header.Size = UDim2.new(1, 0, 0, 44)
-    header.BackgroundColor3 = Theme.Header
-    header.BorderSizePixel = 0
-    header.Active = true
-    header.Draggable = true
-    header.Parent = self.Window
-
-    local headerCorner = Instance.new("UICorner")
-    headerCorner.CornerRadius = UDim.new(0, 8)
-    headerCorner.Parent = header
-
-    local headerAccent = Instance.new("Frame")
-    headerAccent.Size = UDim2.new(0, 4, 0, 20)
-    headerAccent.Position = UDim2.new(0, 16, 0.5, -10)
-    headerAccent.BackgroundColor3 = Theme.Accent
-    headerAccent.BorderSizePixel = 0
-    headerAccent.Parent = header
-
-    local headerAccentCorner = Instance.new("UICorner")
-    headerAccentCorner.CornerRadius = UDim.new(0, 2)
-    headerAccentCorner.Parent = headerAccent
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(0, 400, 1, 0)
-    title.Position = UDim2.new(0, 30, 0, 0)
-    title.BackgroundTransparency = 1
-    title.Text = "COUNTER-BLOX"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 17
-    title.TextColor3 = Theme.Text
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Parent = header
-
-    -- close button
-    local close = Instance.new("TextButton")
-    close.Size = UDim2.new(0, 24, 0, 24)
-    close.Position = UDim2.new(1, -34, 0.5, -12)
-    close.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
-    close.BorderSizePixel = 0
-    close.Text = "x"
-    close.Font = Enum.Font.SourceSansBold
-    close.TextColor3 = Color3.new(1, 1, 1)
-    close.TextSize = 14
-    close.Parent = header
-    close.MouseButton1Click:Connect(function() self:Close() end)
-    local closeCorner = Instance.new("UICorner")
-    closeCorner.CornerRadius = UDim.new(0, 4)
-    closeCorner.Parent = close
-
-    -- sidebar (below header)
-    self.Sidebar = Instance.new("Frame")
-    self.Sidebar.Size = UDim2.new(0, 160, 1, -44)
-    self.Sidebar.Position = UDim2.new(0, 0, 0, 44)
-    self.Sidebar.BackgroundColor3 = Theme.Sidebar
-    self.Sidebar.BorderSizePixel = 0
-    self.Sidebar.Parent = self.Window
-
-    self.TabContainer = Instance.new("Frame")
-    self.TabContainer.Size = UDim2.new(1, 0, 1, -12)
-    self.TabContainer.Position = UDim2.new(0, 0, 0, 12)
-    self.TabContainer.BackgroundTransparency = 1
-    self.TabContainer.Parent = self.Sidebar
-
-    self.TabList = Instance.new("UIListLayout")
-    self.TabList.Padding = UDim.new(0, 2)
-    self.TabList.Parent = self.TabContainer
-
-    -- content area (below header, right of sidebar)
-    self.Content = Instance.new("Frame")
-    self.Content.Size = UDim2.new(1, -160, 1, -44)
-    self.Content.Position = UDim2.new(0, 160, 0, 44)
-    self.Content.BackgroundTransparency = 1
-    self.Content.Parent = self.Window
-end
-
-function UI:_Bind()
-    UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
-        if input.KeyCode == Enum.KeyCode.Delete then
-            self:Toggle()
-        end
-    end)
-end
-
-function UI:Toggle()
-    if self.IsOpen then self:Close() else self:Open() end
-end
-
-function UI:Open()
-    self.IsOpen = true
-    self.Gui.Enabled = true
-    self.SavedMouse = UserInputService.MouseBehavior
-    UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-end
-
-function UI:Close()
-    self.IsOpen = false
-    self.Gui.Enabled = false
-    if self.SavedMouse then
-        UserInputService.MouseBehavior = self.SavedMouse
-    end
-end
-
-function UI:AddTab(name)
-    local tab = {
-        Name = name,
-        Panel = nil,
-        Sections = {},
-        Layout = nil,
-    }
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, 36)
-    btn.BackgroundTransparency = 1
-    btn.Text = name
-    btn.Font = Enum.Font.SourceSans
-    btn.TextSize = 14
-    btn.TextColor3 = Theme.TextDim
-    btn.TextXAlignment = Enum.TextXAlignment.Left
-    btn.Parent = self.TabContainer
-
-    local pad = Instance.new("UIPadding")
-    pad.PaddingLeft = UDim.new(0, 16)
-    pad.Parent = btn
-
-    local panel = Instance.new("ScrollingFrame")
-    panel.Size = UDim2.new(1, -20, 1, -20)
-    panel.Position = UDim2.new(0, 10, 0, 10)
-    panel.BackgroundTransparency = 1
-    panel.BorderSizePixel = 0
-    panel.ScrollBarThickness = 0
-    panel.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    panel.CanvasSize = UDim2.new(0, 0, 0, 0)
-    panel.Visible = false
-    panel.Parent = self.Content
-
-    tab.Panel = panel
-    tab.Layout = Instance.new("UIListLayout")
-    tab.Layout.SortOrder = Enum.SortOrder.LayoutOrder
-    tab.Layout.Padding = UDim.new(0, 6)
-    tab.Layout.Parent = panel
-
-    btn.MouseButton1Click:Connect(function()
-        self:SetTab(tab)
-    end)
-
-    table.insert(self.Tabs, tab)
-    if not self.ActiveTab then
-        self:SetTab(tab)
-    end
-    return tab
-end
-
-function UI:SetTab(tab)
-    self.ActiveTab = tab
-    for i, t in ipairs(self.Tabs) do
-        t.Panel.Visible = (t == tab)
-    end
-    -- highlight active tab button
-    for i, child in ipairs(self.TabContainer:GetChildren()) do
-        if child:IsA("TextButton") then
-            local isActive = (child.Text == tab.Name)
-            child.TextColor3 = isActive and Theme.Accent or Theme.TextDim
-            child.Font = isActive and Enum.Font.SourceSansBold or Enum.Font.SourceSans
-        end
-    end
-end
-
-function UI:AddSection(tab, name)
-    local section = Instance.new("TextLabel")
-    section.Size = UDim2.new(1, 0, 0, 22)
-    section.BackgroundTransparency = 1
-    section.Text = name:upper()
-    section.Font = Enum.Font.SourceSansBold
-    section.TextSize = 12
-    section.TextColor3 = Theme.Section
-    section.TextXAlignment = Enum.TextXAlignment.Left
-    section.Parent = tab.Panel
-
-    local pad = Instance.new("UIPadding")
-    pad.PaddingLeft = UDim.new(0, 4)
-    pad.PaddingTop = UDim.new(0, 6)
-    pad.Parent = section
-
-    return section
-end
-
-function UI:AddToggle(tab, text, default, callback)
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, 0, 0, 32)
-    row.BackgroundColor3 = Theme.Widget
-    row.BorderSizePixel = 0
-    row.Parent = tab.Panel
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 5)
-    corner.Parent = row
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -50, 1, 0)
-    label.Position = UDim2.new(0, 12, 0, 0)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.Font = Enum.Font.SourceSans
-    label.TextSize = 14
-    label.TextColor3 = Theme.Text
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = row
-
-    local switch = Instance.new("Frame")
-    switch.Size = UDim2.new(0, 34, 0, 18)
-    switch.Position = UDim2.new(1, -44, 0.5, -9)
-    switch.BackgroundColor3 = default and Theme.On or Theme.Off
-    switch.BorderSizePixel = 0
-    switch.Parent = row
-
-    local switchCorner = Instance.new("UICorner")
-    switchCorner.CornerRadius = UDim.new(0, 9)
-    switchCorner.Parent = switch
-
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 14, 0, 14)
-    knob.Position = default and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
-    knob.BackgroundColor3 = Color3.new(1, 1, 1)
-    knob.BorderSizePixel = 0
-    knob.Parent = switch
-
-    local knobCorner = Instance.new("UICorner")
-    knobCorner.CornerRadius = UDim.new(0, 7)
-    knobCorner.Parent = knob
-
-    local enabled = default
-    local function set(value)
-        enabled = value
-        switch.BackgroundColor3 = value and Theme.On or Theme.Off
-        knob.Position = value and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
-    end
-
-    row.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            enabled = not enabled
-            set(enabled)
-            if callback then callback(enabled) end
-        end
-    end)
-
-    return { Set = set, Get = function() return enabled end }
-end
-
-function UI:AddSlider(tab, text, min, max, default, decimals, callback)
-    decimals = decimals or 0
-
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, 0, 0, 48)
-    row.BackgroundColor3 = Theme.Widget
-    row.BorderSizePixel = 0
-    row.Parent = tab.Panel
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 5)
-    corner.Parent = row
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0, 100, 0, 20)
-    label.Position = UDim2.new(0, 12, 0, 4)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.Font = Enum.Font.SourceSans
-    label.TextSize = 13
-    label.TextColor3 = Theme.Text
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = row
-
-    local valueLabel = Instance.new("TextLabel")
-    valueLabel.Size = UDim2.new(0, 60, 0, 20)
-    valueLabel.Position = UDim2.new(1, -72, 0, 4)
-    valueLabel.BackgroundTransparency = 1
-    valueLabel.Text = tostring(default)
-    valueLabel.Font = Enum.Font.SourceSans
-    valueLabel.TextSize = 13
-    valueLabel.TextColor3 = Theme.Accent
-    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
-    valueLabel.Parent = row
-
-    local track = Instance.new("Frame")
-    track.Size = UDim2.new(1, -24, 0, 4)
-    track.Position = UDim2.new(0, 12, 0, 30)
-    track.BackgroundColor3 = Theme.Off
-    track.BorderSizePixel = 0
-    track.Parent = row
-
-    local trackCorner = Instance.new("UICorner")
-    trackCorner.CornerRadius = UDim.new(0, 2)
-    trackCorner.Parent = track
-
-    local fill = Instance.new("Frame")
-    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
-    fill.BackgroundColor3 = Theme.Accent
-    fill.BorderSizePixel = 0
-    fill.Parent = track
-
-    local fillCorner = Instance.new("UICorner")
-    fillCorner.CornerRadius = UDim.new(0, 2)
-    fillCorner.Parent = fill
-
-    local value = default
-    local function set(v)
-        value = math.clamp(v, min, max)
-        local frac = (value - min) / (max - min)
-        fill.Size = UDim2.new(frac, 0, 1, 0)
-        valueLabel.Text = string.format("%." .. decimals .. "f", value)
-        if callback then callback(value) end
-    end
-
-    local dragging = false
-    local function updateFromMouse(x)
-        local absX = track.AbsolutePosition.X
-        local absW = track.AbsoluteSize.X
-        local frac = math.clamp((x - absX) / absW, 0, 1)
-        set(min + frac * (max - min))
-    end
-
-    track.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            updateFromMouse(input.Position.X)
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            updateFromMouse(input.Position.X)
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-
-    return { Set = set, Get = function() return value end }
-end
 
 -- ====================== ESP ======================
 local ESP = {}
@@ -518,11 +105,6 @@ function ESP.new()
     return self
 end
 
-function ESP:Toggle()
-    self.Enabled = not self.Enabled
-    if self.Enabled then self:Start() else self:Stop() end
-end
-
 function ESP:Start()
     if self.Connection then return end
     self.Connection = RunService.RenderStepped:Connect(function() self:Render() end)
@@ -536,7 +118,7 @@ function ESP:Stop()
     self:Clear()
 end
 
-function ESP:AddCharacter(character)
+function ESP:AddCharacter()
     local o = {}
     if hasDrawing then
         o.Box = Drawing.new("Square")
@@ -544,7 +126,7 @@ function ESP:AddCharacter(character)
         o.Box.Filled = false
         o.Box.Transparency = 1
         o.Box.Visible = false
-        o.Box.Color = Color3.new(1, 1, 1)
+        o.Box.Color = state.EspColor
 
         o.Name = Drawing.new("Text")
         o.Name.Font = Drawing.Fonts.UI
@@ -619,7 +201,7 @@ function ESP:Render()
         local target = self.Targets[player]
         if not target or target.character ~= character then
             if target then self:RemoveObjects(target.objects) end
-            target = { character = character, objects = self:AddCharacter(character) }
+            target = { character = character, objects = self:AddCharacter() }
             self.Targets[player] = target
         end
 
@@ -644,7 +226,7 @@ function ESP:Render()
         if state.EspBox then
             o.Box.Position = min
             o.Box.Size = Vector2.new(width, height)
-            o.Box.Color = Theme.Accent
+            o.Box.Color = state.EspColor
             o.Box.Visible = true
         else
             o.Box.Visible = false
@@ -706,7 +288,6 @@ Aimbot.__index = Aimbot
 
 function Aimbot.new()
     local self = setmetatable({}, Aimbot)
-    self.Enabled = false
     self.Connection = nil
     return self
 end
@@ -750,7 +331,7 @@ function Aimbot:FindTarget()
 end
 
 function Aimbot:Step()
-    if not self.Enabled then return end
+    if not state.Aim then return end
     local camera = workspace.CurrentCamera
     if not camera then return end
 
@@ -772,7 +353,6 @@ Triggerbot.__index = Triggerbot
 
 function Triggerbot.new()
     local self = setmetatable({}, Triggerbot)
-    self.Enabled = false
     self.Connection = nil
     return self
 end
@@ -790,7 +370,7 @@ function Triggerbot:Stop()
 end
 
 function Triggerbot:Step()
-    if not self.Enabled then return end
+    if not state.Trigger then return end
     local camera = workspace.CurrentCamera
     if not camera then return end
 
@@ -799,10 +379,7 @@ function Triggerbot:Step()
     params.FilterType = Enum.RaycastFilterType.Blacklist
     params.IgnoreWater = true
 
-    local origin = camera.CFrame.Position
-    local direction = camera.CFrame.LookVector * 1000
-    local result = workspace:Raycast(origin, direction, params)
-
+    local result = workspace:Raycast(camera.CFrame.Position, camera.CFrame.LookVector * 1000, params)
     if result and result.Instance then
         local hitChar = result.Instance:FindFirstAncestorOfClass("Model")
         local hitPlayer = hitChar and Players:GetPlayerFromCharacter(hitChar)
@@ -818,9 +395,7 @@ Bhop.__index = Bhop
 
 function Bhop.new()
     local self = setmetatable({}, Bhop)
-    self.Enabled = false
     self.Connection = nil
-    self.LastJump = 0
     return self
 end
 
@@ -842,13 +417,11 @@ function Bhop:Step()
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     if not humanoid or humanoid.Health <= 0 then return end
 
-    -- only hop while actively moving
     if humanoid.MoveDirection.Magnitude <= 0 then
         humanoid.Jump = false
         return
     end
 
-    -- hold jump on the ground, release in the air: auto-jumps on every landing
     if humanoid.FloorMaterial ~= Enum.Material.Air then
         humanoid.Jump = true
     else
@@ -862,7 +435,6 @@ Speed.__index = Speed
 
 function Speed.new()
     local self = setmetatable({}, Speed)
-    self.Enabled = false
     self.Value = 16
     return self
 end
@@ -871,17 +443,12 @@ function Speed:Apply()
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     if humanoid then
-        humanoid.WalkSpeed = self.Enabled and self.Value or 16
+        humanoid.WalkSpeed = state.Speed and self.Value or 16
     end
 end
 
 function Speed:Set(value)
     self.Value = value
-    self:Apply()
-end
-
-function Speed:SetEnabled(enabled)
-    self.Enabled = enabled
     self:Apply()
 end
 
@@ -891,7 +458,6 @@ Fly.__index = Fly
 
 function Fly.new()
     local self = setmetatable({}, Fly)
-    self.Enabled = false
     self.Connection = nil
     self.BodyGyro = nil
     self.BodyVel = nil
@@ -934,9 +500,8 @@ function Fly:Step()
     if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0, 1, 0) end
     if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0, 1, 0) end
 
-    local speed = 50
     if dir.Magnitude > 0 then
-        self.BodyVel.Velocity = dir.Unit * speed
+        self.BodyVel.Velocity = dir.Unit * 50
     else
         self.BodyVel.Velocity = Vector3.new(0, 0, 0)
     end
@@ -957,7 +522,6 @@ Crosshair.__index = Crosshair
 
 function Crosshair.new()
     local self = setmetatable({}, Crosshair)
-    self.Enabled = false
     self.Lines = {}
     self.Connection = nil
     return self
@@ -968,13 +532,11 @@ function Crosshair:Start()
     if self.Connection then return end
 
     local size, gap, thickness = 6, 4, 2
-    local color = Color3.new(0, 1, 0.6)
-
     for i = 1, 4 do
         local line = Drawing.new("Line")
         line.Thickness = thickness
         line.Transparency = 1
-        line.Color = color
+        line.Color = Color3.new(0, 1, 0.6)
         line.Visible = true
         table.insert(self.Lines, line)
     end
@@ -1001,39 +563,20 @@ function Crosshair:Stop()
         self.Connection:Disconnect()
         self.Connection = nil
     end
-    for _, line in ipairs(self.Lines) do
-        pcall(function() line:Remove() end)
-    end
+    for _, line in ipairs(self.Lines) do pcall(function() line:Remove() end) end
     self.Lines = {}
 end
 
 -- ====================== FOV ======================
-local Fov = {}
-Fov.__index = Fov
-
-function Fov.new()
-    local self = setmetatable({}, Fov)
-    self.Value = 70
-    return self
-end
-
-function Fov:Set(value)
-    self.Value = value
+local function setFov(value)
     local camera = workspace.CurrentCamera
-    if camera then
-        camera.FieldOfView = value
-    end
+    if camera then camera.FieldOfView = value end
 end
 
 -- ====================== TEXTURE BUG ======================
 local TextureBug = {}
 TextureBug.__index = TextureBug
-
-function TextureBug.new()
-    local self = setmetatable({}, TextureBug)
-    self.Enabled = false
-    return self
-end
+TextureBug.Enabled = false
 
 function TextureBug:Toggle()
     self.Enabled = not self.Enabled
@@ -1051,13 +594,7 @@ function TextureBug:Toggle()
     end
 end
 
--- ====================== BUILD ======================
-local ui = UI.new()
-
-local aimTab = ui:AddTab("AIMBOT")
-local visTab = ui:AddTab("VISUALS")
-local miscTab = ui:AddTab("MISC")
-
+-- ====================== INSTANCES ======================
 local EspInst = ESP.new()
 local AimbotInst = Aimbot.new()
 local TriggerInst = Triggerbot.new()
@@ -1065,75 +602,177 @@ local BhopInst = Bhop.new()
 local SpeedInst = Speed.new()
 local FlyInst = Fly.new()
 local CrosshairInst = Crosshair.new()
-local FovInst = Fov.new()
-local TextureBugInst = TextureBug.new()
+local TextureBugInst = setmetatable({}, TextureBug)
+
+-- ====================== BUILD MENU ======================
+Library.Folders = {
+    Directory = "CounterBlox",
+    Configs = "CounterBlox/Configs",
+    Assets = "CounterBlox/Assets",
+}
+
+local Accent = Color3.fromRGB(84, 134, 255)
+Library.Theme.Accent = Accent
+pcall(function()
+    Library:ChangeTheme("Accent", Accent)
+    Library:ChangeTheme("AccentGradient", Color3.fromRGB(40, 70, 160))
+end)
+
+local Window = Library:Window({
+    Name = "Counter-Blox",
+    SubName = "Extension",
+    MenuKeybind = Enum.KeyCode.Delete,
+})
+
+local KeybindList = Library:KeybindList("Keybinds")
+
+Window:Category("Main")
 
 -- AIMBOT
-ui:AddSection(aimTab, "Aimbot")
-ui:AddToggle(aimTab, "Enabled", false, function(v)
-    state.Aim = v
-    if v then AimbotInst:Start() else AimbotInst:Stop() end
-end)
-ui:AddSlider(aimTab, "FOV", 30, 360, 120, 0, function(v) state.AimFov = v end)
-ui:AddSlider(aimTab, "Smoothness", 1, 30, 8, 0, function(v) state.AimSmooth = v end)
+local aimPage = Window:Page({ Name = "Aimbot" })
+local aimSection = aimPage:Section({ Name = "Aimbot", Side = 1 })
 
-ui:AddSection(aimTab, "Triggerbot")
-ui:AddToggle(aimTab, "Auto fire", false, function(v)
-    state.Trigger = v
-    if v then TriggerInst:Start() else TriggerInst:Stop() end
-end)
+local aimToggle = aimSection:Toggle({
+    Name = "Enabled",
+    Flag = "AimEnabled",
+    Default = false,
+    Callback = function(v)
+        state.Aim = v
+        if v then AimbotInst:Start() else AimbotInst:Stop() end
+    end,
+})
+
+aimToggle:Slider({
+    Name = "FOV",
+    Flag = "AimFov",
+    Min = 30, Max = 360, Default = 120,
+    Callback = function(v) state.AimFov = v end,
+})
+
+aimToggle:Slider({
+    Name = "Smoothness",
+    Flag = "AimSmooth",
+    Min = 1, Max = 30, Default = 8,
+    Callback = function(v) state.AimSmooth = v end,
+})
+
+local triggerSection = aimPage:Section({ Name = "Triggerbot", Side = 2 })
+triggerSection:Toggle({
+    Name = "Auto Fire",
+    Flag = "TriggerEnabled",
+    Default = false,
+    Callback = function(v)
+        state.Trigger = v
+        if v then TriggerInst:Start() else TriggerInst:Stop() end
+    end,
+})
 
 -- VISUALS
-ui:AddSection(visTab, "ESP")
-ui:AddToggle(visTab, "Enabled", false, function(v)
-    state.Esp = v
-    if v then EspInst:Start() else EspInst:Stop() end
-end)
-ui:AddToggle(visTab, "Box", true, function(v) state.EspBox = v end)
-ui:AddToggle(visTab, "Name", true, function(v) state.EspName = v end)
-ui:AddToggle(visTab, "Health", true, function(v) state.EspHealth = v end)
-ui:AddToggle(visTab, "Tracer", false, function(v) state.EspTracer = v end)
-ui:AddToggle(visTab, "Distance", false, function(v) state.EspDistance = v end)
+local visPage = Window:Page({ Name = "Visuals" })
+local espSection = visPage:Section({ Name = "ESP", Side = 1 })
 
-ui:AddSection(visTab, "Other")
-ui:AddToggle(visTab, "Crosshair", false, function(v)
-    state.Crosshair = v
-    if v then CrosshairInst:Start() else CrosshairInst:Stop() end
-end)
-ui:AddSlider(visTab, "Field of View", 30, 140, 70, 0, function(v)
-    state.Fov = v
-    FovInst:Set(v)
-end)
+espSection:Toggle({
+    Name = "Enabled",
+    Flag = "EspEnabled",
+    Default = false,
+    Callback = function(v)
+        state.Esp = v
+        if v then EspInst:Start() else EspInst:Stop() end
+    end,
+})
+espSection:Toggle({ Name = "Box", Flag = "EspBox", Default = true, Callback = function(v) state.EspBox = v end })
+espSection:Toggle({ Name = "Name", Flag = "EspName", Default = true, Callback = function(v) state.EspName = v end })
+espSection:Toggle({ Name = "Health", Flag = "EspHealth", Default = true, Callback = function(v) state.EspHealth = v end })
+espSection:Toggle({ Name = "Tracer", Flag = "EspTracer", Default = false, Callback = function(v) state.EspTracer = v end })
+espSection:Toggle({ Name = "Distance", Flag = "EspDistance", Default = false, Callback = function(v) state.EspDistance = v end })
+espSection:Label("Box Color"):Colorpicker({
+    Name = "Color",
+    Flag = "EspColor",
+    Default = Color3.fromRGB(84, 134, 255),
+    Callback = function(c) state.EspColor = c end,
+})
+
+local otherSection = visPage:Section({ Name = "Other", Side = 2 })
+otherSection:Toggle({
+    Name = "Crosshair",
+    Flag = "CrosshairEnabled",
+    Default = false,
+    Callback = function(v)
+        state.Crosshair = v
+        if v then CrosshairInst:Start() else CrosshairInst:Stop() end
+    end,
+})
+otherSection:Slider({
+    Name = "Field of View",
+    Flag = "Fov",
+    Min = 30, Max = 140, Default = 70,
+    Callback = function(v)
+        state.Fov = v
+        setFov(v)
+    end,
+})
 
 -- MISC
-ui:AddSection(miscTab, "Movement")
-ui:AddToggle(miscTab, "Bunnyhop", false, function(v)
-    state.Bhop = v
-    if v then BhopInst:Start() else BhopInst:Stop() end
-end)
-ui:AddToggle(miscTab, "Speed", false, function(v)
-    state.Speed = v
-    SpeedInst:SetEnabled(v)
-end)
-ui:AddSlider(miscTab, "Speed Value", 16, 100, 16, 0, function(v)
-    state.SpeedVal = v
-    SpeedInst:Set(v)
-end)
-ui:AddToggle(miscTab, "Fly", false, function(v)
-    state.Fly = v
-    if v then FlyInst:Start() else FlyInst:Stop() end
-end)
+local miscPage = Window:Page({ Name = "Misc" })
+local moveSection = miscPage:Section({ Name = "Movement", Side = 1 })
 
-ui:AddSection(miscTab, "Other")
-ui:AddToggle(miscTab, "Texture Bug", false, function(v)
-    state.TextureBug = v
-    TextureBugInst:Toggle()
-end)
+moveSection:Toggle({
+    Name = "Bunnyhop",
+    Flag = "BhopEnabled",
+    Default = false,
+    Callback = function(v)
+        state.Bhop = v
+        if v then BhopInst:Start() else BhopInst:Stop() end
+    end,
+})
+moveSection:Toggle({
+    Name = "Speed",
+    Flag = "SpeedEnabled",
+    Default = false,
+    Callback = function(v)
+        state.Speed = v
+        SpeedInst:Apply()
+    end,
+})
+moveSection:Slider({
+    Name = "Speed Value",
+    Flag = "SpeedValue",
+    Min = 16, Max = 100, Default = 16,
+    Callback = function(v)
+        state.SpeedVal = v
+        SpeedInst:Set(v)
+    end,
+})
+moveSection:Toggle({
+    Name = "Fly",
+    Flag = "FlyEnabled",
+    Default = false,
+    Callback = function(v)
+        state.Fly = v
+        if v then FlyInst:Start() else FlyInst:Stop() end
+    end,
+})
 
--- expose
+local miscOther = miscPage:Section({ Name = "Other", Side = 2 })
+miscOther:Toggle({
+    Name = "Texture Bug",
+    Flag = "TextureBugEnabled",
+    Default = false,
+    Callback = function(v)
+        state.TextureBug = v
+        TextureBugInst:Toggle()
+    end,
+})
+
+-- Settings (scale, configs, watermark) + init
+Library:CreateSettingsPage(Window, KeybindList)
+Window:Init()
+
+-- ====================== EXPOSE ======================
 pcall(function()
     getgenv().CBX = {
-        UI = ui,
+        Library = Library,
+        Window = Window,
         ESP = EspInst,
         Aimbot = AimbotInst,
         Triggerbot = TriggerInst,
@@ -1141,9 +780,14 @@ pcall(function()
         Speed = SpeedInst,
         Fly = FlyInst,
         Crosshair = CrosshairInst,
-        Fov = FovInst,
         TextureBug = TextureBugInst,
     }
 end)
 
-notify("Counter-Blox loaded  |  DELETE to open menu")
+pcall(function()
+    Library:Notification({
+        Title = "Counter-Blox",
+        Description = "Loaded. Press DELETE to open the menu.",
+        Duration = 6,
+    })
+end)
