@@ -61,6 +61,17 @@ local function main()
         cameraControl:SetLock(isOpen)
     end)
 
+    menuManager.OnFunctionSelected:Connect(function(index)
+        local actions = {
+            [1] = function() movementEngine:ToggleBunnyhop() end,
+            [2] = function() movementEngine:ToggleTextureBug() end,
+            [3] = function() visualRenderer:ToggleESP() end,
+        }
+        if actions[index] then
+            actions[index]()
+        end
+    end)
+
     _G.CounterBloxExt = {
         Menu = menuManager,
         Input = inputHandler,
