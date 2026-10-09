@@ -7,7 +7,7 @@ A Roblox script extension for **Counter-Blox** that adds a custom menu system, k
 Load the script using a loadstring function:
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/MollyIsOP/CounterBloxExtension/main/loader.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/scramblepaws/CounterBloxExtension/main/loader.lua"))()
 ```
 
 ## Features

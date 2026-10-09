@@ -1,8 +1,8 @@
 -- Counter-Blox Extension Loader
--- Load this via: loadstring(game:HttpGet("https://raw.githubusercontent.com/MollyIsOP/CounterBloxExtension/main/loader.lua"))()
+-- Load this via: loadstring(game:HttpGet("https://raw.githubusercontent.com/scramblepaws/CounterBloxExtension/main/loader.lua"))()
 
 local function loadModule(name)
-    return loadstring(game:HttpGet("https://raw.githubusercontent.com/MollyIsOP/CounterBloxExtension/main/modules/" .. name .. ".lua"))()
+    return loadstring(game:HttpGet("https://raw.githubusercontent.com/scramblepaws/CounterBloxExtension/main/modules/" .. name .. ".lua"))()
 end
 
 -- Load utility modules

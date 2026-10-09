@@ -12,7 +12,7 @@ end
 -- Load all modules
 local function loadModule(path)
     local success, result = pcall(function()
-        return loadstring(game:HttpGet("https://raw.githubusercontent.com/MollyIsOP/CounterBloxExtension/main/" .. path .. ".lua"))
+        return loadstring(game:HttpGet("https://raw.githubusercontent.com/scramblepaws/CounterBloxExtension/main/" .. path .. ".lua"))
     end)
     
     if not success then
