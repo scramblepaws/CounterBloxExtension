@@ -35,6 +35,22 @@ end
 
 Library.LogsEnabled = true
 
+-- silence the library's own harmless "SetOpen before defined" warning
+do
+    local origSafeCall = Library.SafeCall
+    Library.SafeCall = function(self, func, ...)
+        local args = table.pack(...)
+        local ok, err = pcall(func, table.unpack(args, 1, args.n))
+        if not ok then
+            local msg = tostring(err)
+            if not msg:find("SetOpen") then
+                warn(err)
+            end
+        end
+        return ok
+    end
+end
+
 -- ====================== STATE ======================
 local state = {
     -- aimbot
@@ -59,6 +75,7 @@ local state = {
     EspDistance = false,
     EspColor = Color3.fromRGB(84, 134, 255),
     EspTeamCheck = false,
+    EspBoxType = "normal",
 
     Crosshair = false,
     Fov = 70,
@@ -77,55 +94,97 @@ local function sameTeam(player)
     return myTeam ~= nil and player.Team == myTeam
 end
 
--- ====================== ESP ======================
+-- ====================== ESP (tulontop/esp-lib.lua) ======================
+-- Purpose-built Drawing ESP library: normal/corner boxes, health bars,
+-- name tags, distances and tracers, with automatic cleanup.
+local espLib
+do
+    local ok, result = pcall(function()
+        return loadstring(game:HttpGet("https://raw.githubusercontent.com/tulontop/esp-lib.lua/refs/heads/main/source.lua"))()
+    end)
+    if ok and result then
+        espLib = result
+    else
+        warn("[CBX] Failed to load esp-lib")
+    end
+end
+
 local ESP = {}
 ESP.__index = ESP
 
-local function getBoundingBox(character)
-    local min = Vector2.new(math.huge, math.huge)
-    local max = Vector2.new(-math.huge, -math.huge)
-    local onscreen = false
-    local camera = workspace.CurrentCamera
-    if not camera then return min, max, false end
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            local size = part.Size / 2
-            local cf = part.CFrame
-            local corners = {
-                Vector3.new( size.X,  size.Y,  size.Z),
-                Vector3.new(-size.X,  size.Y,  size.Z),
-                Vector3.new( size.X, -size.Y,  size.Z),
-                Vector3.new(-size.X, -size.Y,  size.Z),
-                Vector3.new( size.X,  size.Y, -size.Z),
-                Vector3.new(-size.X,  size.Y, -size.Z),
-                Vector3.new( size.X, -size.Y, -size.Z),
-                Vector3.new(-size.X, -size.Y, -size.Z),
-            }
-            for _, offset in ipairs(corners) do
-                local pos, visible = camera:WorldToViewportPoint(cf:PointToWorldSpace(offset))
-                if visible then
-                    local v2 = Vector2.new(pos.X, pos.Y)
-                    min = min:Min(v2)
-                    max = max:Max(v2)
-                    onscreen = true
-                end
-            end
-        end
-    end
-    return min, max, onscreen
-end
-
 function ESP.new()
     local self = setmetatable({}, ESP)
-    self.Enabled = false
-    self.Targets = {}
+    self.Added = {}
     self.Connection = nil
     return self
 end
 
+function ESP:IsEnemy(player)
+    if state.EspTeamCheck and sameTeam(player) then
+        return false
+    end
+    return true
+end
+
+function ESP:ApplySettings()
+    local e = espLib and getgenv().esplib
+    if not e then return end
+    local on = state.Esp
+    e.box.enabled = on and state.EspBox
+    e.box.type = state.EspBoxType
+    e.box.fill = state.EspColor
+    e.box.outline = Color3.new(0, 0, 0)
+    e.name.enabled = on and state.EspName
+    e.healthbar.enabled = on and state.EspHealth
+    e.distance.enabled = on and state.EspDistance
+    e.tracer.enabled = on and state.EspTracer
+end
+
+function ESP:AddPlayer(player)
+    if not espLib or player == LocalPlayer then return end
+    if not self:IsEnemy(player) then return end
+    local character = player.Character
+    if not character then return end
+    if self.Added[character] then return end
+    self.Added[character] = true
+
+    local ok = pcall(function()
+        espLib.add_box(character)
+        espLib.add_healthbar(character)
+        espLib.add_name(character)
+        espLib.add_distance(character)
+        espLib.add_tracer(character)
+    end)
+    if not ok then
+        self.Added[character] = nil
+    end
+end
+
 function ESP:Start()
     if self.Connection then return end
-    self.Connection = RunService.RenderStepped:Connect(function(dt) self:Render(dt) end)
+    self:ApplySettings()
+
+    local function hookPlayer(player)
+        if player ~= LocalPlayer then
+            player.CharacterAdded:Connect(function()
+                task.wait(2)
+                self:AddPlayer(player)
+            end)
+        end
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        self:AddPlayer(player)
+        hookPlayer(player)
+    end
+    Players.PlayerAdded:Connect(hookPlayer)
+
+    self.Connection = RunService.RenderStepped:Connect(function()
+        self:ApplySettings()
+        for _, player in ipairs(Players:GetPlayers()) do
+            self:AddPlayer(player)
+        end
+    end)
 end
 
 function ESP:Stop()
@@ -133,231 +192,7 @@ function ESP:Stop()
         self.Connection:Disconnect()
         self.Connection = nil
     end
-    self:Clear()
-end
-
-local FADE_TIME = 0.18
-
-function ESP:CreateObjects()
-    local o = {}
-    if hasDrawing then
-        -- outer border (thick dark outline)
-        o.BoxOuter = Drawing.new("Square")
-        o.BoxOuter.Thickness = 3
-        o.BoxOuter.Filled = false
-        o.BoxOuter.Transparency = 0
-        o.BoxOuter.Color = Color3.new(0, 0, 0)
-        o.BoxOuter.Visible = false
-
-        -- inner border (thin colored)
-        o.BoxInner = Drawing.new("Square")
-        o.BoxInner.Thickness = 1
-        o.BoxInner.Filled = false
-        o.BoxInner.Transparency = 0
-        o.BoxInner.Color = state.EspColor
-        o.BoxInner.Visible = false
-
-        o.Name = Drawing.new("Text")
-        o.Name.Font = Drawing.Fonts.UI
-        o.Name.Size = 13
-        o.Name.Center = true
-        o.Name.Outline = true
-        o.Name.Transparency = 0
-        o.Name.Visible = false
-        o.Name.Color = Color3.new(1, 1, 1)
-
-        o.HealthBg = Drawing.new("Square")
-        o.HealthBg.Filled = true
-        o.HealthBg.Transparency = 0
-        o.HealthBg.Visible = false
-        o.HealthBg.Color = Color3.new(0, 0, 0)
-
-        o.Health = Drawing.new("Square")
-        o.Health.Filled = true
-        o.Health.Transparency = 0
-        o.Health.Visible = false
-        o.Health.Color = Color3.new(0, 1, 0)
-
-        o.Tracer = Drawing.new("Line")
-        o.Tracer.Thickness = 1
-        o.Tracer.Transparency = 0
-        o.Tracer.Visible = false
-        o.Tracer.Color = Color3.new(1, 1, 1)
-
-        o.Distance = Drawing.new("Text")
-        o.Distance.Font = Drawing.Fonts.UI
-        o.Distance.Size = 13
-        o.Distance.Center = true
-        o.Distance.Outline = true
-        o.Distance.Transparency = 0
-        o.Distance.Visible = false
-        o.Distance.Color = Color3.new(1, 1, 1)
-    end
-    return o
-end
-
-function ESP:RemoveObjects(o)
-    for _, d in pairs(o) do pcall(function() d:Remove() end) end
-end
-
-function ESP:SetAlpha(o, alpha)
-    o.BoxOuter.Transparency = alpha
-    o.BoxInner.Transparency = alpha
-    o.Name.Transparency = alpha
-    o.HealthBg.Transparency = alpha
-    o.Health.Transparency = alpha
-    o.Tracer.Transparency = alpha
-    o.Distance.Transparency = alpha
-end
-
-function ESP:Hide(o)
-    o.BoxOuter.Visible = false
-    o.BoxInner.Visible = false
-    o.Name.Visible = false
-    o.HealthBg.Visible = false
-    o.Health.Visible = false
-    o.Tracer.Visible = false
-    o.Distance.Visible = false
-end
-
-function ESP:Render(dt)
-    if not hasDrawing then return end
-    local camera = workspace.CurrentCamera
-    if not camera then return end
-
-    -- create targets on appear, mark dead on death / leave / team
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
-
-        local target = self.Targets[player]
-        local character = player.Character
-        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-        local alive = character and humanoid and humanoid.Health > 0
-        local show = alive and not (state.EspTeamCheck and sameTeam(player))
-
-        if show then
-            if not target or target.character ~= character then
-                if target then self:RemoveObjects(target.objects) end
-                target = {
-                    character = character,
-                    objects = self:CreateObjects(),
-                    alpha = 0,
-                    dead = false,
-                }
-                self.Targets[player] = target
-            end
-            target.dead = false
-        elseif target then
-            target.dead = true
-        end
-    end
-
-    -- render + fade
-    for player, target in pairs(self.Targets) do
-        local o = target.objects
-        local step = (dt or 0.016) / FADE_TIME
-
-        if target.dead or not player.Parent then
-            target.alpha = math.max(0, target.alpha - step)
-            if target.alpha <= 0 then
-                self:RemoveObjects(o)
-                self.Targets[player] = nil
-                continue
-            end
-        else
-            target.alpha = math.min(1, target.alpha + step)
-        end
-
-        local character = target.character
-        local dying = target.dead or not player.Parent
-        local min, max, onscreen = getBoundingBox(character)
-
-        if onscreen then
-            -- temporal smoothing keeps the box stable
-            if target.lastMin then
-                min = target.lastMin + (min - target.lastMin) * 0.35
-                max = target.lastMax + (max - target.lastMax) * 0.35
-            end
-            target.lastMin, target.lastMax = min, max
-        elseif dying and target.lastMin then
-            -- keep the last known box so the death fade is visible
-            min, max = target.lastMin, target.lastMax
-        else
-            self:Hide(o)
-            continue
-        end
-
-        local alpha = target.alpha
-        local width = max.X - min.X
-        local height = max.Y - min.Y
-        local centerX = (min.X + max.X) / 2
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        local health = humanoid and math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1) or 0
-
-        if state.EspBox then
-            o.BoxOuter.Position = min - Vector2.new(1, 1)
-            o.BoxOuter.Size = Vector2.new(width + 2, height + 2)
-            o.BoxOuter.Visible = true
-
-            o.BoxInner.Position = min
-            o.BoxInner.Size = Vector2.new(width, height)
-            o.BoxInner.Color = state.EspColor
-            o.BoxInner.Visible = true
-        else
-            o.BoxOuter.Visible = false
-            o.BoxInner.Visible = false
-        end
-
-        if state.EspName then
-            o.Name.Text = player.Name
-            o.Name.Position = Vector2.new(centerX, min.Y - 15)
-            o.Name.Visible = true
-        else
-            o.Name.Visible = false
-        end
-
-        if state.EspHealth then
-            local barX = min.X - 6
-            o.HealthBg.Position = Vector2.new(barX, min.Y)
-            o.HealthBg.Size = Vector2.new(3, height)
-            o.HealthBg.Visible = true
-            o.Health.Position = Vector2.new(barX, min.Y + height * (1 - health))
-            o.Health.Size = Vector2.new(3, height * health)
-            o.Health.Color = (health > 0.6 and Color3.new(0, 1, 0))
-                or (health > 0.3 and Color3.new(1, 1, 0))
-                or Color3.new(1, 0, 0)
-            o.Health.Visible = true
-        else
-            o.HealthBg.Visible = false
-            o.Health.Visible = false
-        end
-
-        if state.EspTracer then
-            o.Tracer.From = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y)
-            o.Tracer.To = Vector2.new(centerX, max.Y)
-            o.Tracer.Visible = true
-        else
-            o.Tracer.Visible = false
-        end
-
-        if state.EspDistance then
-            local dist = (camera.CFrame.Position - character:GetPivot().Position).Magnitude
-            o.Distance.Text = tostring(math.floor(dist)) .. "m"
-            o.Distance.Position = Vector2.new(centerX, max.Y + 4)
-            o.Distance.Visible = true
-        else
-            o.Distance.Visible = false
-        end
-
-        self:SetAlpha(o, alpha)
-    end
-end
-
-function ESP:Clear()
-    for _, target in pairs(self.Targets) do
-        self:RemoveObjects(target.objects)
-    end
-    self.Targets = {}
+    self:ApplySettings()
 end
 
 -- ====================== AIMBOT ======================
@@ -766,6 +601,171 @@ function TextureBug:Toggle()
     end
 end
 
+-- ====================== RECON (reverse engineering) ======================
+local Recon = {}
+Recon.__index = Recon
+
+function Recon.new()
+    local self = setmetatable({}, Recon)
+    self.Logging = false
+    self.Lines = {}
+    return self
+end
+
+function Recon:Add(text)
+    table.insert(self.Lines, text)
+    print("[CBX] " .. text)
+end
+
+function Recon:Clear()
+    self.Lines = {}
+end
+
+function Recon:Save()
+    local path = "CounterBlox/recon.txt"
+    local ok = pcall(function()
+        if not isfolder("CounterBlox") then makefolder("CounterBlox") end
+        writefile(path, table.concat(self.Lines, "\n"))
+    end)
+    return ok, path
+end
+
+function Recon:DumpRemotes()
+    self:Add("===== REMOTES =====")
+    local wanted = {
+        RemoteEvent = true, RemoteFunction = true,
+        UnreliableRemoteEvent = true,
+        BindableEvent = true, BindableFunction = true,
+    }
+    local function scan(container)
+        for _, obj in ipairs(container:GetDescendants()) do
+            if wanted[obj.ClassName] then
+                self:Add(obj:GetFullName() .. "  [" .. obj.ClassName .. "]")
+            end
+        end
+    end
+    pcall(scan, game:GetService("ReplicatedStorage"))
+    pcall(scan, game:GetService("ReplicatedFirst"))
+    pcall(scan, workspace)
+end
+
+function Recon:DumpScripts()
+    self:Add("===== LOADED MODULES =====")
+    pcall(function()
+        for _, s in ipairs(getloadedmodules()) do
+            self:Add("Module: " .. s:GetFullName())
+        end
+    end)
+    self:Add("===== RUNNING SCRIPTS =====")
+    pcall(function()
+        for _, s in ipairs(getrunningscripts()) do
+            self:Add(s.ClassName .. ": " .. s:GetFullName())
+        end
+    end)
+end
+
+function Recon:DumpEnv(scriptName)
+    self:Add("===== ENV: " .. tostring(scriptName) .. " =====")
+    pcall(function()
+        for _, s in ipairs(game:GetDescendants()) do
+            if (s:IsA("LocalScript") or s:IsA("ModuleScript")) and s.Name == scriptName then
+                local env = getsenv(s)
+                local keys = {}
+                for k, v in pairs(env) do
+                    table.insert(keys, k .. "  (" .. type(v) .. ")")
+                end
+                table.sort(keys)
+                self:Add("-- " .. s:GetFullName())
+                for _, k in ipairs(keys) do
+                    self:Add("   " .. k)
+                end
+            end
+        end
+    end)
+end
+
+function Recon:DumpSettings()
+    self:Add("===== WORKSPACE.SETTINGS =====")
+    pcall(function()
+        local s = workspace:FindFirstChild("settings")
+        if s then
+            for _, v in ipairs(s:GetDescendants()) do
+                if v:IsA("ValueBase") then
+                    self:Add(v.Name .. " = " .. tostring(v.Value))
+                end
+            end
+        end
+    end)
+end
+
+function Recon:DumpGui()
+    self:Add("===== PLAYERGUI =====")
+    pcall(function()
+        for _, g in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+            self:Add(g:GetFullName() .. "  [" .. g.ClassName .. "]")
+        end
+    end)
+end
+
+function Recon:DumpCharacter()
+    self:Add("===== CHARACTER =====")
+    pcall(function()
+        local char = LocalPlayer.Character
+        if char then
+            for _, c in ipairs(char:GetDescendants()) do
+                self:Add(c:GetFullName() .. "  [" .. c.ClassName .. "]")
+            end
+        end
+    end)
+end
+
+function Recon:ToggleRemoteLog()
+    if self.Logging then
+        self.Logging = false
+        if self.HookRef then
+            pcall(function() hookmetamethod(game, "__namecall", self.HookRef) end)
+        end
+        self:Add("Remote logging stopped")
+        return false
+    end
+
+    self.Logging = true
+    local ok = pcall(function()
+        local old
+        old = hookmetamethod(game, "__namecall", function(self2, ...)
+            local method = getnamecallmethod()
+            if method == "FireServer" or method == "InvokeServer" then
+                local args = { ... }
+                local parts = {}
+                for i = 1, math.min(4, #args) do
+                    parts[i] = tostring(args[i])
+                end
+                print("[CBX-REMOTE] " .. tostring(self2) .. " : " .. method .. "(" .. table.concat(parts, ", ") .. ")")
+            end
+            return old(self2, ...)
+        end)
+        self.HookRef = old
+    end)
+    self:Add(ok and "Remote logging started (see console)" or "hookmetamethod unavailable")
+    return true
+end
+
+function Recon:FullReport()
+    self:Clear()
+    self:DumpRemotes()
+    self:DumpScripts()
+    self:DumpSettings()
+    self:DumpGui()
+    self:DumpCharacter()
+    local ok, path = self:Save()
+    if ok then
+        self:Add("Report saved to " .. path)
+    else
+        self:Add("writefile unavailable - report only in console")
+    end
+    return #self.Lines
+end
+
 -- ====================== INSTANCES ======================
 local EspInst = ESP.new()
 local AimbotInst = Aimbot.new()
@@ -775,6 +775,7 @@ local SpeedInst = Speed.new()
 local FlyInst = Fly.new()
 local CrosshairInst = Crosshair.new()
 local TextureBugInst = setmetatable({}, TextureBug)
+local ReconInst = Recon.new()
 
 -- ====================== BUILD MENU ======================
 Library.Folders = {
@@ -880,6 +881,14 @@ espSection:Toggle({ Name = "Health", Flag = "EspHealth", Default = true, Callbac
 espSection:Toggle({ Name = "Tracer", Flag = "EspTracer", Default = false, Callback = function(v) state.EspTracer = v end })
 espSection:Toggle({ Name = "Distance", Flag = "EspDistance", Default = false, Callback = function(v) state.EspDistance = v end })
 espSection:Toggle({ Name = "Team Check", Flag = "EspTeamCheck", Default = false, Callback = function(v) state.EspTeamCheck = v end })
+espSection:Dropdown({
+    Name = "Box Style",
+    Flag = "EspBoxType",
+    Items = { "normal", "corner" },
+    Default = "normal",
+    Multi = false,
+    Callback = function(v) state.EspBoxType = v end,
+})
 espSection:Label("Box Color"):Colorpicker({
     Name = "Color",
     Flag = "EspColor",
@@ -965,6 +974,45 @@ miscOther:Toggle({
     end,
 })
 
+-- DEVELOPER (reverse engineering)
+local devPage = Window:Page({ Name = "Developer" })
+local reconSection = devPage:Section({ Name = "Recon", Side = 1 })
+
+local function reconButton(name, fn)
+    reconSection:Button({
+        Name = name,
+        Callback = function()
+            ReconInst:Clear()
+            fn()
+            Library:Log(name .. " done (" .. #ReconInst.Lines .. " lines -> console)", 4)
+        end,
+    })
+end
+
+reconButton("Dump Remotes", function() ReconInst:DumpRemotes() end)
+reconButton("Dump Scripts", function() ReconInst:DumpScripts() end)
+reconButton("Dump settings values", function() ReconInst:DumpSettings() end)
+reconButton("Dump PlayerGui", function() ReconInst:DumpGui() end)
+reconButton("Dump Character", function() ReconInst:DumpCharacter() end)
+reconButton("Full report (console + file)", function()
+    local n = ReconInst:FullReport()
+    Library:Log("Full report: " .. n .. " lines", 4)
+end)
+reconButton("Dump env: 'Animate'", function() ReconInst:DumpEnv("Animate") end)
+
+local logSection = devPage:Section({ Name = "Remote logging", Side = 2 })
+logSection:Toggle({
+    Name = "Log FireServer calls",
+    Flag = "ReconRemoteLog",
+    Default = false,
+    Callback = function(v)
+        if v ~= ReconInst.Logging then
+            ReconInst:ToggleRemoteLog()
+        end
+    end,
+})
+logSection:Label("Output goes to the console (and CounterBlox/recon.txt)")
+
 -- Settings (scale, configs, watermark) + init
 Window:Category("Settings")
 Library:CreateSettingsPage(Window, KeybindList)
@@ -983,6 +1031,8 @@ pcall(function()
         Fly = FlyInst,
         Crosshair = CrosshairInst,
         TextureBug = TextureBugInst,
+        Recon = ReconInst,
+        EspLib = espLib,
     }
 end)
 
