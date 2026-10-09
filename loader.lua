@@ -86,6 +86,17 @@ local state = {
 
     Trigger = false,
 
+    -- ragebot
+    Rage = false,
+    RageFov = 200,
+    RageHitbox = "Head",
+    RagePriority = "FOV",
+    RageAutoFire = true,
+    RageDelay = 0.08,
+    RageTeamCheck = false,
+    RageWallbang = true,
+    RageFovCircle = true,
+
     -- esp
     Esp = false,
     EspBox = true,
@@ -96,9 +107,17 @@ local state = {
     EspColor = Color3.fromRGB(84, 134, 255),
     EspTeamCheck = false,
     EspBoxType = "normal",
+    EspChams = false,
+    EspChamsColor = Color3.fromRGB(84, 134, 255),
+    EspHeadDot = false,
 
     Crosshair = false,
     Fov = 70,
+
+    -- kill effects
+    KillEffect = false,
+    KillEffectSound = true,
+    KillEffectColor = Color3.fromRGB(255, 80, 80),
 
     -- misc
     Bhop = false,
@@ -222,6 +241,13 @@ function ESP:CreateObjects()
     o.Distance.Visible = false
     o.Distance.Color = Color3.new(1, 1, 1)
 
+    o.HeadDot = Drawing.new("Square")
+    o.HeadDot.Filled = true
+    o.HeadDot.Thickness = 0
+    o.HeadDot.Transparency = 0
+    o.HeadDot.Visible = false
+    o.HeadDot.Color = state.EspColor
+
     return o
 end
 
@@ -237,6 +263,7 @@ function ESP:SetAlpha(o, a)
     o.Health.Transparency = a
     o.Tracer.Transparency = a
     o.Distance.Transparency = a
+    o.HeadDot.Transparency = a
 end
 
 function ESP:Hide(o)
@@ -247,6 +274,7 @@ function ESP:Hide(o)
     o.Health.Visible = false
     o.Tracer.Visible = false
     o.Distance.Visible = false
+    o.HeadDot.Visible = false
 end
 
 function ESP:Start()
@@ -286,6 +314,24 @@ function ESP:Render(dt)
         elseif target then
             target.dead = true
         end
+
+        -- chams (Highlight through walls)
+        if character then
+            local hl = character:FindFirstChild("CBXChams")
+            if state.EspChams and show then
+                if not hl then
+                    hl = Instance.new("Highlight")
+                    hl.Name = "CBXChams"
+                    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    hl.OutlineTransparency = 1
+                    hl.Parent = character
+                end
+                hl.FillColor = state.EspChamsColor
+                hl.FillTransparency = 0.5
+            elseif hl then
+                hl:Destroy()
+            end
+        end
     end
 
     for player, target in pairs(self.Targets) do
@@ -315,7 +361,7 @@ function ESP:Render(dt)
         local humanoid = target.character:FindFirstChildOfClass("Humanoid")
         local health = humanoid and math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1) or 0
 
-        if state.EspBox then
+        if state.Esp and state.EspBox then
             o.BoxOuter.Position = min - Vector2.new(1, 1)
             o.BoxOuter.Size = Vector2.new(width + 2, height + 2)
             o.BoxOuter.Visible = true
@@ -328,7 +374,7 @@ function ESP:Render(dt)
             o.BoxInner.Visible = false
         end
 
-        if state.EspName then
+        if state.Esp and state.EspName then
             o.Name.Text = player.Name
             o.Name.Position = Vector2.new(cx, min.Y - 15)
             o.Name.Visible = true
@@ -336,7 +382,7 @@ function ESP:Render(dt)
             o.Name.Visible = false
         end
 
-        if state.EspHealth then
+        if state.Esp and state.EspHealth then
             local barX = min.X - 6
             o.HealthBg.Position = Vector2.new(barX, min.Y)
             o.HealthBg.Size = Vector2.new(3, height)
@@ -352,7 +398,7 @@ function ESP:Render(dt)
             o.Health.Visible = false
         end
 
-        if state.EspTracer then
+        if state.Esp and state.EspTracer then
             o.Tracer.From = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y)
             o.Tracer.To = Vector2.new(cx, max.Y)
             o.Tracer.Visible = true
@@ -360,13 +406,32 @@ function ESP:Render(dt)
             o.Tracer.Visible = false
         end
 
-        if state.EspDistance then
+        if state.Esp and state.EspDistance then
             local dist = (camera.CFrame.Position - target.character:GetPivot().Position).Magnitude
             o.Distance.Text = tostring(math.floor(dist)) .. "m"
             o.Distance.Position = Vector2.new(cx, max.Y + 4)
             o.Distance.Visible = true
         else
             o.Distance.Visible = false
+        end
+
+        if state.Esp and state.EspHeadDot then
+            local head = target.character:FindFirstChild("HeadHB") or target.character:FindFirstChild("Head")
+            if head then
+                local hp, hv = camera:WorldToViewportPoint(head.Position)
+                if hv then
+                    o.HeadDot.Position = Vector2.new(hp.X - 3, hp.Y - 3)
+                    o.HeadDot.Size = Vector2.new(6, 6)
+                    o.HeadDot.Color = state.EspColor
+                    o.HeadDot.Visible = true
+                else
+                    o.HeadDot.Visible = false
+                end
+            else
+                o.HeadDot.Visible = false
+            end
+        else
+            o.HeadDot.Visible = false
         end
 
         self:SetAlpha(o, target.alpha)
@@ -378,6 +443,12 @@ function ESP:Clear()
         self:RemoveObjects(target.objects)
     end
     self.Targets = {}
+    -- remove chams highlights
+    for _, player in ipairs(Players:GetPlayers()) do
+        local character = player.Character
+        local hl = character and character:FindFirstChild("CBXChams")
+        if hl then hl:Destroy() end
+    end
 end
 
 -- ====================== AIMBOT ======================
@@ -522,6 +593,143 @@ function Aimbot:DrawCircle()
             self.Circle[i] = line
         end
 
+        line.Visible = show
+        if show then
+            local a1 = (i / CIRCLE_SEGMENTS) * math.pi * 2
+            local a2 = (((i % CIRCLE_SEGMENTS) + 1) / CIRCLE_SEGMENTS) * math.pi * 2
+            line.From = center + Vector2.new(math.cos(a1), math.sin(a1)) * radius
+            line.To = center + Vector2.new(math.cos(a2), math.sin(a2)) * radius
+        end
+    end
+end
+
+-- ====================== RAGEBOT ======================
+-- Instant-snap aim + auto fire. Picks a hitbox, prioritises by FOV or distance,
+-- optionally shoots through walls, and fires at a configurable interval.
+local Ragebot = {}
+Ragebot.__index = Ragebot
+
+function Ragebot.new()
+    local self = setmetatable({}, Ragebot)
+    self.Connection = nil
+    self.LastFire = 0
+    self.Circle = {}
+    return self
+end
+
+function Ragebot:Start()
+    if self.Connection then return end
+    self.Connection = RunService.RenderStepped:Connect(function() self:Step() end)
+end
+
+function Ragebot:Stop()
+    if self.Connection then
+        self.Connection:Disconnect()
+        self.Connection = nil
+    end
+    for _, line in ipairs(self.Circle) do pcall(function() line:Remove() end) end
+    self.Circle = {}
+end
+
+function Ragebot:getHitbox(character)
+    local which = state.RageHitbox
+    if which == "Head" then
+        return character:FindFirstChild("HeadHB") or character:FindFirstChild("Head")
+    elseif which == "Torso" then
+        return character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
+    elseif which == "Body" then
+        return character:FindFirstChild("LowerTorso") or character:FindFirstChild("HumanoidRootPart")
+    end
+    return character:FindFirstChild("HeadHB") or character:FindFirstChild("Head")
+end
+
+function Ragebot:isVisible(character, part)
+    local camera = workspace.CurrentCamera
+    if not camera then return false end
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = { LocalPlayer.Character }
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.IgnoreWater = true
+    local origin = camera.CFrame.Position
+    local result = workspace:Raycast(origin, part.Position - origin, params)
+    if not result then return true end
+    return result.Instance:IsDescendantOf(character)
+end
+
+function Ragebot:FindTarget()
+    local camera = workspace.CurrentCamera
+    if not camera then return nil end
+    local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+
+    local bestPart, bestScore = nil, math.huge
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and not (state.RageTeamCheck and sameTeam(player)) then
+            local character = player.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            if character and humanoid and humanoid.Health > 0 then
+                local part = self:getHitbox(character)
+                if part then
+                    local pos, onScreen = camera:WorldToScreenPoint(part.Position)
+                    if onScreen then
+                        local screenDist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+                        if screenDist <= state.RageFov then
+                            local visible = self:isVisible(character, part)
+                            if visible or state.RageWallbang then
+                                local score = (state.RagePriority == "Distance")
+                                    and (camera.CFrame.Position - part.Position).Magnitude
+                                    or screenDist
+                                if score < bestScore then
+                                    bestScore = score
+                                    bestPart = part
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestPart
+end
+
+function Ragebot:Step()
+    self:DrawCircle()
+    if not state.Rage then return end
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+
+    local target = self:FindTarget()
+    if not target then return end
+
+    -- instant snap (no smoothing)
+    camera.CFrame = CFrame.lookAt(camera.CFrame.Position, target.Position)
+
+    if state.RageAutoFire and not UserInputService:GetFocusedTextBox() then
+        local now = os.clock()
+        if now - self.LastFire >= state.RageDelay then
+            pcall(function() mouse1click() end)
+            self.LastFire = now
+        end
+    end
+end
+
+function Ragebot:DrawCircle()
+    if not hasDrawing then return end
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+    local show = state.Rage and state.RageFovCircle
+    local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+    local radius = state.RageFov
+    for i = 1, CIRCLE_SEGMENTS do
+        local line = self.Circle[i]
+        if not line then
+            line = Drawing.new("Line")
+            line.Thickness = 1
+            line.Transparency = 1
+            line.Color = Color3.fromRGB(255, 60, 60)
+            line.Visible = false
+            self.Circle[i] = line
+        end
         line.Visible = show
         if show then
             local a1 = (i / CIRCLE_SEGMENTS) * math.pi * 2
@@ -1098,8 +1306,11 @@ function Game:Start()
     if self.Started then return end
     self.Started = true
 
-    -- hit / impact replication -> hitmarker
+    -- hit / impact replication -> hitmarker + remember impact position
     self:On("HatObject", function(part, x, y, z, _, _, _, weapon)
+        if type(x) == "number" and type(y) == "number" and type(z) == "number" then
+            self.LastHitPos = Vector3.new(x, y, z)
+        end
         if state.Hitmarker then
             self:FlashHit()
         end
@@ -1109,6 +1320,9 @@ function Game:Start()
     self:On("CreateRagdoll", function(_, victim)
         if state.KillNotify and victim then
             notify("Kill", tostring(victim) .. " was killed")
+        end
+        if state.KillEffect then
+            self:SpawnKillEffect()
         end
     end)
 
@@ -1121,6 +1335,60 @@ end
 
 function Game:FlashHit()
     self.HitAlpha = 1
+end
+
+function Game:SpawnKillEffect()
+    local pos = self.LastHitPos
+    if not pos then return end
+
+    local part = Instance.new("Part")
+    part.Name = "CBXKillEffect"
+    part.Size = Vector3.new(1, 1, 1)
+    part.Transparency = 1
+    part.Anchored = true
+    part.CanCollide = false
+    part.CanQuery = false
+    part.Position = pos
+    part.Parent = workspace
+
+    local emitter = Instance.new("ParticleEmitter")
+    emitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    emitter.Color = ColorSequence.new(state.KillEffectColor)
+    emitter.LightEmission = 1
+    emitter.Lifetime = NumberRange.new(0.4, 0.8)
+    emitter.Speed = NumberRange.new(12, 26)
+    emitter.SpreadAngle = Vector2.new(180, 180)
+    emitter.Rate = 0
+    emitter.Parent = part
+    emitter:Emit(60)
+
+    if state.KillEffectSound then
+        local sound = Instance.new("Sound")
+        sound.SoundId = "rbxasset://sounds/electronicpingshort.wav"
+        sound.Volume = 1
+        sound.Parent = part
+        sound:Play()
+    end
+
+    -- floating "KILL" text
+    local billboard = Instance.new("BillboardGui")
+    billboard.Size = UDim2.new(0, 80, 0, 24)
+    billboard.StudsOffsetWorldSpace = Vector3.new(0, 2, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Parent = part
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = "KILL"
+    label.Font = Enum.Font.SourceSansBold
+    label.TextSize = 18
+    label.TextColor3 = state.KillEffectColor
+    label.TextStrokeTransparency = 0.5
+    label.Parent = billboard
+
+    task.delay(1.5, function()
+        pcall(function() part:Destroy() end)
+    end)
 end
 
 function Game:EnsureLines()
@@ -1172,6 +1440,7 @@ end
 -- ====================== INSTANCES ======================
 local EspInst = ESP.new()
 local AimbotInst = Aimbot.new()
+local RagebotInst = Ragebot.new()
 local TriggerInst = Triggerbot.new()
 local BhopInst = Bhop.new()
 local SpeedInst = Speed.new()
@@ -1230,6 +1499,24 @@ triggerGroup:AddToggle("TriggerEnabled", {
     end,
 })
 
+local rageGroup = Tabs.Rage:AddRightGroupbox("Ragebot")
+rageGroup:AddToggle("RageEnabled", {
+    Text = "Enabled",
+    Default = false,
+    Callback = function(v)
+        state.Rage = v
+        if v then RagebotInst:Start() else RagebotInst:Stop() end
+    end,
+})
+rageGroup:AddToggle("RageAutoFire", { Text = "Auto Fire", Default = true, Callback = function(v) state.RageAutoFire = v end })
+rageGroup:AddSlider("RageFov", { Text = "FOV", Default = 200, Min = 30, Max = 600, Rounding = 0, Suffix = "px", Callback = function(v) state.RageFov = v end })
+rageGroup:AddSlider("RageDelay", { Text = "Fire Delay", Default = 0.08, Min = 0.01, Max = 0.5, Rounding = 2, Suffix = "s", Callback = function(v) state.RageDelay = v end })
+rageGroup:AddDropdown("RageHitbox", { Text = "Hitbox", Values = { "Head", "Torso", "Body" }, Default = 1, Callback = function(v) state.RageHitbox = v end })
+rageGroup:AddDropdown("RagePriority", { Text = "Priority", Values = { "FOV", "Distance" }, Default = 1, Callback = function(v) state.RagePriority = v end })
+rageGroup:AddToggle("RageWallbang", { Text = "Wallbang (shoot through walls)", Default = true, Callback = function(v) state.RageWallbang = v end })
+rageGroup:AddToggle("RageTeamCheck", { Text = "Team Check", Default = false, Callback = function(v) state.RageTeamCheck = v end })
+rageGroup:AddToggle("RageFovCircle", { Text = "FOV Circle", Default = true, Callback = function(v) state.RageFovCircle = v end })
+
 -- VISUALS
 local espGroup = Tabs.Visuals:AddLeftGroupbox("ESP")
 espGroup:AddToggle("EspEnabled", {
@@ -1246,9 +1533,24 @@ espGroup:AddToggle("EspHealth", { Text = "Health", Default = true, Callback = fu
 espGroup:AddToggle("EspTracer", { Text = "Tracer", Default = false, Callback = function(v) state.EspTracer = v end })
 espGroup:AddToggle("EspDistance", { Text = "Distance", Default = false, Callback = function(v) state.EspDistance = v end })
 espGroup:AddToggle("EspTeamCheck", { Text = "Team Check", Default = false, Callback = function(v) state.EspTeamCheck = v end })
+espGroup:AddToggle("EspHeadDot", { Text = "Head Dot", Default = false, Callback = function(v) state.EspHeadDot = v end })
 espGroup:AddLabel("Box Color"):AddColorPicker("EspColor", {
     Default = Color3.fromRGB(84, 134, 255),
     Callback = function(v) state.EspColor = v end,
+})
+
+local chamsGroup = Tabs.Visuals:AddRightGroupbox("Chams")
+chamsGroup:AddToggle("EspChams", {
+    Text = "Enabled",
+    Default = false,
+    Callback = function(v)
+        state.EspChams = v
+        if v and not EspInst.Connection then EspInst:Start() end
+    end,
+})
+chamsGroup:AddLabel("Chams Color"):AddColorPicker("EspChamsColor", {
+    Default = Color3.fromRGB(84, 134, 255),
+    Callback = function(v) state.EspChamsColor = v end,
 })
 
 local visOther = Tabs.Visuals:AddRightGroupbox("Other")
@@ -1299,6 +1601,18 @@ local hitGroup = Tabs.Game:AddLeftGroupbox("Hit feedback")
 hitGroup:AddToggle("Hitmarker", { Text = "Hitmarker", Default = false, Callback = function(v) state.Hitmarker = v end })
 hitGroup:AddToggle("KillNotify", { Text = "Kill notifications", Default = false, Callback = function(v) state.KillNotify = v end })
 hitGroup:AddLabel("Driven by ReplicatedStorage.Events")
+
+local killGroup = Tabs.Game:AddRightGroupbox("Kill effects")
+killGroup:AddToggle("KillEffect", {
+    Text = "Enabled",
+    Default = false,
+    Callback = function(v) state.KillEffect = v end,
+})
+killGroup:AddToggle("KillEffectSound", { Text = "Sound", Default = true, Callback = function(v) state.KillEffectSound = v end })
+killGroup:AddLabel("Effect Color"):AddColorPicker("KillEffectColor", {
+    Default = Color3.fromRGB(255, 80, 80),
+    Callback = function(v) state.KillEffectColor = v end,
+})
 
 -- DEVELOPER
 local reconGroup = Tabs.Developer:AddLeftGroupbox("Recon")
@@ -1373,6 +1687,7 @@ pcall(function()
         Window = Window,
         ESP = EspInst,
         Aimbot = AimbotInst,
+        Ragebot = RagebotInst,
         Triggerbot = TriggerInst,
         Bhop = BhopInst,
         Speed = SpeedInst,
