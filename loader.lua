@@ -2,7 +2,7 @@
     Counter-Blox Extension
     Single-file Roblox script.
 
-    Menu: neverlose-ui (https://github.com/ImInsane-1337/neverlose-ui)
+    Menu: LinoriaLib (https://github.com/violin-suzutsuki/LinoriaLib)
 
     Load with:
     loadstring(game:HttpGet("https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"))()
