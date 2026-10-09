@@ -950,6 +950,7 @@ miscOther:Toggle({
 })
 
 -- Settings (scale, configs, watermark) + init
+Window:Category("Settings")
 Library:CreateSettingsPage(Window, KeybindList)
 Window:Init()
 
