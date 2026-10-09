@@ -91,6 +91,10 @@ local state = {
     SpeedVal = 16,
     Fly = false,
     TextureBug = false,
+
+    -- game events
+    Hitmarker = false,
+    KillNotify = false,
 }
 
 local function sameTeam(player)
@@ -883,6 +887,111 @@ function Recon:ToggleRemoteReceiver()
     return true
 end
 
+-- ====================== GAME EVENTS (reverse-engineered) ======================
+-- Hooks Counter-Blox's real ReplicatedStorage.Events signals.
+local Game = {}
+Game.__index = Game
+
+local HITMARKER_SEGMENTS = 4
+
+function Game.new()
+    local self = setmetatable({}, Game)
+    self.Connections = {}
+    self.HitAlpha = 0
+    self.Lines = {}
+    self.Started = false
+    return self
+end
+
+function Game:Events()
+    return game:GetService("ReplicatedStorage"):FindFirstChild("Events")
+end
+
+function Game:On(eventName, callback)
+    local events = self:Events()
+    local remote = events and events:FindFirstChild(eventName)
+    if remote and (remote:IsA("RemoteEvent") or remote:IsA("BindableEvent")) then
+        table.insert(self.Connections, remote.OnClientEvent:Connect(callback))
+        return true
+    end
+    return false
+end
+
+function Game:Start()
+    if self.Started then return end
+    self.Started = true
+
+    -- hit / impact replication -> hitmarker
+    self:On("HatObject", function(part, x, y, z, _, _, _, weapon)
+        if state.Hitmarker then
+            self:FlashHit()
+        end
+    end)
+
+    -- kills
+    self:On("CreateRagdoll", function(_, victim)
+        if state.KillNotify and victim then
+            notify("Kill", tostring(victim) .. " was killed")
+        end
+    end)
+
+    if hasDrawing then
+        table.insert(self.Connections, RunService.RenderStepped:Connect(function(dt)
+            self:Render(dt)
+        end))
+    end
+end
+
+function Game:FlashHit()
+    self.HitAlpha = 1
+end
+
+function Game:EnsureLines()
+    if not hasDrawing or #self.Lines > 0 then return end
+    for i = 1, HITMARKER_SEGMENTS do
+        local line = Drawing.new("Line")
+        line.Thickness = 2
+        line.Transparency = 0
+        line.Color = Color3.new(1, 1, 1)
+        line.Visible = false
+        self.Lines[i] = line
+    end
+end
+
+function Game:Render(dt)
+    self:EnsureLines()
+    if #self.Lines == 0 then return end
+
+    if self.HitAlpha > 0 then
+        self.HitAlpha = math.max(0, self.HitAlpha - (dt or 0.016) / 0.4)
+    end
+
+    local camera = workspace.CurrentCamera
+    local show = self.HitAlpha > 0 and camera
+    if show then
+        local cx = camera.ViewportSize.X / 2
+        local cy = camera.ViewportSize.Y / 2
+        local inner, outer = 6, 12
+        local pts = {
+            { Vector2.new(cx - outer, cy - outer), Vector2.new(cx - inner, cy - inner) },
+            { Vector2.new(cx + inner, cy - inner), Vector2.new(cx + outer, cy - outer) },
+            { Vector2.new(cx - outer, cy + outer), Vector2.new(cx - inner, cy + inner) },
+            { Vector2.new(cx + inner, cy + inner), Vector2.new(cx + outer, cy + outer) },
+        }
+        for i = 1, HITMARKER_SEGMENTS do
+            local line = self.Lines[i]
+            line.From = pts[i][1]
+            line.To = pts[i][2]
+            line.Transparency = self.HitAlpha
+            line.Visible = true
+        end
+    else
+        for i = 1, #self.Lines do
+            self.Lines[i].Visible = false
+        end
+    end
+end
+
 -- ====================== INSTANCES ======================
 local EspInst = ESP.new()
 local AimbotInst = Aimbot.new()
@@ -893,6 +1002,8 @@ local FlyInst = Fly.new()
 local CrosshairInst = Crosshair.new()
 local TextureBugInst = setmetatable({}, TextureBug)
 local ReconInst = Recon.new()
+local GameInst = Game.new()
+GameInst:Start()
 
 -- ====================== BUILD MENU ======================
 Library.Folders = {
@@ -1158,6 +1269,23 @@ gameSection:Toggle({
 })
 gameSection:Label("Output goes to the console")
 
+-- GAME (reverse-engineered event features)
+local gamePage = Window:Page({ Name = "Game" })
+local hitSection = gamePage:Section({ Name = "Hit feedback", Side = 1 })
+hitSection:Toggle({
+    Name = "Hitmarker",
+    Flag = "Hitmarker",
+    Default = false,
+    Callback = function(v) state.Hitmarker = v end,
+})
+hitSection:Toggle({
+    Name = "Kill notifications",
+    Flag = "KillNotify",
+    Default = false,
+    Callback = function(v) state.KillNotify = v end,
+})
+hitSection:Label("Driven by ReplicatedStorage.Events.HatObject / CreateRagdoll")
+
 -- Settings (scale, configs, watermark) + init
 Window:Category("Settings")
 Library:CreateSettingsPage(Window, KeybindList)
@@ -1177,6 +1305,8 @@ pcall(function()
         Crosshair = CrosshairInst,
         TextureBug = TextureBugInst,
         Recon = ReconInst,
+        Game = GameInst,
+        Events = game:GetService("ReplicatedStorage"):FindFirstChild("Events"),
         EspLib = espLib,
     }
 end)
