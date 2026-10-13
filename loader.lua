@@ -10,7 +10,7 @@
     Menu key: DELETE
 ]]
 
-local SCRIPT_VERSION = "2.3"
+local SCRIPT_VERSION = "2.4"
 local LOADER_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"
 local VERSION_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/VERSION"
 
@@ -828,7 +828,8 @@ end
 
 function Bhop:Start()
     if self.Connection then return end
-    self.Connection = RunService.Heartbeat:Connect(function() self:Step() end)
+    -- RenderStepped so the jump/velocity is applied before the physics step
+    self.Connection = RunService.RenderStepped:Connect(function() self:Step() end)
 end
 
 function Bhop:Stop()
@@ -841,31 +842,36 @@ end
 function Bhop:Step()
     local character = LocalPlayer.Character
     if not character then return end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local humanoid = character:FindFirstChildOfClass("Humanoid") or character:FindFirstChild("Humanoid")
     local root = character:FindFirstChild("HumanoidRootPart")
     if not humanoid or not root or humanoid.Health <= 0 then return end
     if UserInputService:GetFocusedTextBox() then return end
 
-    -- only bhop while holding Space and actively moving
+    -- hold Space to bhop
     if not UserInputService:IsKeyDown(Enum.KeyCode.Space) then return end
-    local moveDir = humanoid.MoveDirection
-    if moveDir.Magnitude <= 0 then return end
 
-    local speed = state.BhopSpeed
-    local unit = moveDir.Unit
-    local airborne = humanoid:GetState() == Enum.HumanoidStateType.Freefall
-
-    -- auto-jump the instant we touch the ground
-    if not airborne then
-        humanoid.Jump = true
-    end
+    -- Counter-Blox uses a custom controller, so we read WASD directly against
+    -- the character's look vector instead of relying on Humanoid.MoveDirection.
+    local look = root.CFrame.LookVector
+    local dir = Vector3.new()
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + look end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - look end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + Vector3.new(-look.Z, 0, look.X) end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir + Vector3.new(look.Z, 0, -look.X) end
 
     -- push horizontal speed (slider value), keep vertical momentum
-    root.AssemblyLinearVelocity = Vector3.new(
-        unit.X * speed,
-        root.AssemblyLinearVelocity.Y,
-        unit.Z * speed
-    )
+    if dir.Magnitude > 0 then
+        dir = dir.Unit
+        local speed = state.BhopSpeed
+        root.AssemblyLinearVelocity = Vector3.new(
+            dir.X * speed,
+            root.AssemblyLinearVelocity.Y,
+            dir.Z * speed
+        )
+    end
+
+    -- auto-jump on landing (setting Jump every frame re-triggers on touch)
+    humanoid.Jump = true
 end
 
 -- ====================== SPEED ======================
