@@ -10,7 +10,7 @@
     Menu key: DELETE
 ]]
 
-local SCRIPT_VERSION = "2.9"
+local SCRIPT_VERSION = "2.10"
 local LOADER_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"
 local VERSION_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/VERSION"
 
@@ -2158,65 +2158,6 @@ function Legitbot:Step(dt)
     end
 end
 
--- ====================== SKIN CHANGER ======================
--- Counter-Blox stores per-weapon skin selections in
--- <Player>.SkinFolder.<T|CT>Folder[weapon].Value = skinName.
-local Skins = {}
-Skins.__index = Skins
-
-function Skins.new()
-    return setmetatable({}, Skins)
-end
-
-function Skins:List()
-    local out = {}
-    local skins = game:GetService("ReplicatedStorage"):FindFirstChild("Skins")
-    if skins then
-        for _, w in ipairs(skins:GetChildren()) do
-            table.insert(out, w.Name)
-        end
-        table.sort(out)
-    end
-    return out
-end
-
-function Skins:ListFor(weapon)
-    local out = {}
-    local skins = game:GetService("ReplicatedStorage"):FindFirstChild("Skins")
-    local w = skins and weapon and skins:FindFirstChild(weapon)
-    if w then
-        for _, s in ipairs(w:GetChildren()) do
-            table.insert(out, s.Name)
-        end
-        table.sort(out)
-    end
-    if #out == 0 then table.insert(out, "Stock") end
-    return out
-end
-
-function Skins:Apply(weapon, skin)
-    if not weapon or not skin then return 0 end
-    local folders = {}
-    local playerFolder = LocalPlayer:FindFirstChild("SkinFolder")
-    if playerFolder then table.insert(folders, playerFolder) end
-    local character = LocalPlayer.Character
-    local charFolder = character and character:FindFirstChild("SkinFolder")
-    if charFolder then table.insert(folders, charFolder) end
-
-    local applied = 0
-    for _, folder in ipairs(folders) do
-        for _, team in ipairs({ "TFolder", "CTFolder" }) do
-            local teamFolder = folder:FindFirstChild(team)
-            local value = teamFolder and teamFolder:FindFirstChild(weapon)
-            if value then
-                value.Value = skin
-                applied = applied + 1
-            end
-        end
-    end
-    return applied
-end
-
 -- ====================== INSTANCES ======================
 local EspInst = ESP.new()
 local AimbotInst = Aimbot.new()
@@ -2234,7 +2175,6 @@ local ExtrasInst = Extras.new()
 ExtrasInst:Start()
 local WorldInst = World.new()
 WorldInst:Start()
-local SkinsInst = Skins.new()
 local LegitbotInst = Legitbot.new()
 
 -- ====================== UPDATER ======================
@@ -2453,32 +2393,7 @@ local weaponGroup = Tabs.Weapons:AddLeftGroupbox("Weapons")
 weaponGroup:AddToggle("NoSpread", { Text = "No Spread", Default = false, Callback = function(v) state.NoSpread = v end })
 weaponGroup:AddToggle("NoRecoil", { Text = "No Recoil", Default = false, Callback = function(v) state.NoRecoil = v end })
 weaponGroup:AddButton({ Text = "Rescan spreads", Func = function() ExtrasInst.SpreadScanned = false end })
-
-local skinGroup = Tabs.Weapons:AddRightGroupbox("Skin Changer")
-skinGroup:AddDropdown("SkinWeapon", {
-    Text = "Weapon",
-    Values = SkinsInst:List(),
-    Default = 1,
-    Callback = function(v)
-        local list = SkinsInst:ListFor(v)
-        if Options.SkinName then Options.SkinName:Refresh(list, list[1]) end
-    end,
-})
-skinGroup:AddDropdown("SkinName", { Text = "Skin", Values = {}, Default = 1 })
-skinGroup:AddButton({
-    Text = "Apply skin",
-    Func = function()
-        local weapon = Options.SkinWeapon and Options.SkinWeapon.Value
-        local skin = Options.SkinName and Options.SkinName.Value
-        if not weapon or not skin then
-            notify("Skins", "Pick a weapon first")
-            return
-        end
-        local applied = SkinsInst:Apply(weapon, skin)
-        notify("Skins", skin .. " -> " .. weapon .. " (" .. applied .. " slots)")
-    end,
-})
-skinGroup:AddLabel("Changes your viewmodel skin only")
+weaponGroup:AddLabel("Skin changing is server-validated - removed (ban)")
 
 local miscOther = Tabs.Misc:AddRightGroupbox("Other")
 miscOther:AddToggle("TextureBugEnabled", {
@@ -2607,7 +2522,6 @@ pcall(function()
         Recon = ReconInst,
         Extras = ExtrasInst,
         World = WorldInst,
-        Skins = SkinsInst,
         Legitbot = LegitbotInst,
         Updater = Updater,
         Version = SCRIPT_VERSION,
