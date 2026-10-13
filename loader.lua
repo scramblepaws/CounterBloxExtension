@@ -10,7 +10,7 @@
     Menu key: DELETE
 ]]
 
-local SCRIPT_VERSION = "2.4"
+local SCRIPT_VERSION = "2.5"
 local LOADER_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"
 local VERSION_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/VERSION"
 
@@ -129,6 +129,19 @@ local state = {
     Speed = false,
     Fly = false,
     TextureBug = false,
+    AutoStrafe = false,
+    StrafeSpeed = 30,
+    AirAccel = 2,
+    NoSpread = false,
+    NoRecoil = false,
+
+    -- world visuals
+    WorldColor = false,
+    WorldColorValue = Color3.fromRGB(255, 255, 255),
+    WorldSaturation = 0,
+    WorldBrightness = 0,
+    WorldFog = false,
+    WorldFogEnd = 1000,
 
     -- game events
     Hitmarker = false,
@@ -1517,15 +1530,14 @@ function Game:Render(dt)
 end
 
 -- ====================== MOVEMENT EXTRAS ======================
--- Techniques ported from Counter-Blox movement cheats (pivo.ware):
--- noclip, airstuck, edgebug, pixelsurf, jumpbug, auto-strafe.
+-- Techniques ported from Counter-Blox cheats (pivo.ware):
+-- noclip, airstuck, edgebug, pixelsurf, jumpbug, auto-strafe, nospread, norecoil.
 local Extras = {}
 Extras.__index = Extras
 
 function Extras.new()
     local self = setmetatable({}, Extras)
     self.Connection = nil
-    self.StrafeConnection = nil
     self.SurfVel = nil
     self.NoclipCache = nil
     self.NoclipCharacter = nil
@@ -1538,22 +1550,23 @@ function Extras.new()
     self.AutoStrafe = false
     self.AirAccel = 2
     self.EdgebugDebounce = false
+    self.SpreadSaved = nil
+    self.RecoilController = nil
     return self
 end
 
 function Extras:Start()
     if self.Connection then return end
-    self.Connection = RunService.Stepped:Connect(function() self:Step() end)
-    self.StrafeConnection = UserInputService.InputChanged:Connect(function(input) self:OnMouseMove(input) end)
+    self.Connection = RunService.Stepped:Connect(function(_, dt) self:Step(dt) end)
 end
 
 function Extras:Stop()
     if self.Connection then self.Connection:Disconnect() self.Connection = nil end
-    if self.StrafeConnection then self.StrafeConnection:Disconnect() self.StrafeConnection = nil end
     self.NoClip = false
     self.AirStuck = false
     self.PixelSurf = false
     self:RestoreNoclip()
+    self:RestoreSpread()
     if self.SurfVel then self.SurfVel:Destroy() self.SurfVel = nil end
 end
 
@@ -1650,25 +1663,90 @@ function Extras:TryEdgebug(humanoid, root)
     end)
 end
 
-function Extras:OnMouseMove(input)
+-- Auto-strafe: while airborne and holding a movement key, accelerate the
+-- horizontal velocity toward the movement direction (works with Counter-Blox's
+-- custom controller, unlike the WalkSpeed method).
+function Extras:DoAutoStrafe(character, humanoid, root)
     if not self.AutoStrafe then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-    local character, humanoid = self:Character()
-    if not character then return end
     local st = humanoid:GetState()
     if st ~= Enum.HumanoidStateType.Freefall and st ~= Enum.HumanoidStateType.Jumping then return end
 
-    local delta = input.Delta.X
-    local strafeKey = (delta < 0 and UserInputService:IsKeyDown(Enum.KeyCode.A))
-        or (delta > 0 and UserInputService:IsKeyDown(Enum.KeyCode.D))
-    if strafeKey then
-        local gain = math.abs(delta) / 25 * self.AirAccel
-        humanoid.WalkSpeed = math.clamp(humanoid.WalkSpeed + gain, 0, 120)
+    local look = root.CFrame.LookVector
+    local dir = Vector3.new()
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + look end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - look end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + Vector3.new(-look.Z, 0, look.X) end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir + Vector3.new(look.Z, 0, -look.X) end
+    if dir.Magnitude <= 0 then return end
+
+    dir = dir.Unit
+    local speed = state.StrafeSpeed
+    local target = Vector3.new(dir.X * speed, 0, dir.Z * speed)
+    local vel = root.AssemblyLinearVelocity
+    local current = Vector3.new(vel.X, 0, vel.Z)
+    local factor = math.clamp(self.AirAccel / 10, 0, 1)
+    local new = current + (target - current) * factor
+    root.AssemblyLinearVelocity = Vector3.new(new.X, vel.Y, new.Z)
+end
+
+-- NoSpread: zero every "Spread" value under ReplicatedStorage.Weapons (pivo method)
+function Extras:UpdateSpread(dt)
+    if not state.NoSpread then
+        self:RestoreSpread()
+        return
+    end
+    self.SpreadTimer = (self.SpreadTimer or 0) + (dt or 0)
+    if self.SpreadSaved and self.SpreadTimer < 1 then return end
+    self.SpreadTimer = 0
+    self.SpreadSaved = self.SpreadSaved or {}
+
+    local weapons = game:GetService("ReplicatedStorage"):FindFirstChild("Weapons")
+    if not weapons then return end
+    for _, obj in ipairs(weapons:GetDescendants()) do
+        if obj.Name == "Spread" and obj:IsA("ValueBase") then
+            if self.SpreadSaved[obj] == nil then
+                self.SpreadSaved[obj] = obj.Value
+            end
+            obj.Value = 0
+        end
     end
 end
 
-function Extras:Step()
+function Extras:RestoreSpread()
+    if not self.SpreadSaved then return end
+    for obj, value in pairs(self.SpreadSaved) do
+        if obj.Parent then obj.Value = value end
+    end
+    self.SpreadSaved = nil
+    self.SpreadTimer = nil
+end
+
+-- NoRecoil: find the game controller table holding RecoilX/RecoilY and zero them
+function Extras:FindRecoilController()
+    if self.RecoilController then return self.RecoilController end
+    if type(getgc) ~= "function" then return nil end
+    for _, obj in ipairs(getgc(true)) do
+        if type(obj) == "table" and rawget(obj, "RecoilX") ~= nil and rawget(obj, "RecoilY") ~= nil then
+            self.RecoilController = obj
+            return obj
+        end
+    end
+    return nil
+end
+
+function Extras:UpdateRecoil()
+    if not state.NoRecoil then return end
+    local controller = self.RecoilController or self:FindRecoilController()
+    if controller then
+        controller.RecoilX = 0
+        controller.RecoilY = 0
+    end
+end
+
+function Extras:Step(dt)
     self:ReadBinds()
+    self:UpdateSpread(dt)
+    self:UpdateRecoil()
 
     local character, humanoid, root = self:Character()
     if not character then return end
@@ -1703,6 +1781,78 @@ function Extras:Step()
     if self.Edgebug and not self.EdgebugDebounce then
         self:TryEdgebug(humanoid, root)
     end
+
+    -- Auto-strafe
+    self:DoAutoStrafe(character, humanoid, root)
+end
+
+-- ====================== WORLD (visuals) ======================
+-- Tint / saturation / brightness / fog via ColorCorrection + Lighting.
+local World = {}
+World.__index = World
+
+function World.new()
+    local self = setmetatable({}, World)
+    self.Lighting = game:GetService("Lighting")
+    self.SavedAmbient = self.Lighting.Ambient
+    self.SavedOutdoor = self.Lighting.OutdoorAmbient
+    self.SavedFogEnd = self.Lighting.FogEnd
+    self.SavedFogColor = self.Lighting.FogColor
+    self.Signature = nil
+    self.Effect = Instance.new("ColorCorrectionEffect")
+    self.Effect.Name = "CBXWorld"
+    self.Connection = nil
+    return self
+end
+
+function World:Apply()
+    local sig = table.concat({
+        tostring(state.WorldColor),
+        state.WorldColorValue:ToHex(),
+        tostring(state.WorldSaturation),
+        tostring(state.WorldBrightness),
+        tostring(state.WorldFog),
+        tostring(state.WorldFogEnd),
+    }, "|")
+    if sig == self.Signature then return end
+    self.Signature = sig
+
+    if state.WorldColor then
+        self.Effect.Parent = self.Lighting
+        self.Effect.TintColor = state.WorldColorValue
+        self.Effect.Saturation = state.WorldSaturation / 100
+        self.Effect.Brightness = state.WorldBrightness / 100
+        self.Lighting.Ambient = state.WorldColorValue
+        self.Lighting.OutdoorAmbient = state.WorldColorValue
+        if state.WorldFog then
+            self.Lighting.FogColor = state.WorldColorValue
+            self.Lighting.FogEnd = state.WorldFogEnd
+        else
+            self.Lighting.FogEnd = self.SavedFogEnd
+            self.Lighting.FogColor = self.SavedFogColor
+        end
+    else
+        self.Effect.Parent = nil
+        self.Lighting.Ambient = self.SavedAmbient
+        self.Lighting.OutdoorAmbient = self.SavedOutdoor
+        self.Lighting.FogEnd = self.SavedFogEnd
+        self.Lighting.FogColor = self.SavedFogColor
+    end
+end
+
+function World:Start()
+    if self.Connection then return end
+    self.Connection = RunService.RenderStepped:Connect(function() self:Apply() end)
+end
+
+function World:Stop()
+    if self.Connection then self.Connection:Disconnect() self.Connection = nil end
+    self.Effect.Parent = nil
+    self.Lighting.Ambient = self.SavedAmbient
+    self.Lighting.OutdoorAmbient = self.SavedOutdoor
+    self.Lighting.FogEnd = self.SavedFogEnd
+    self.Lighting.FogColor = self.SavedFogColor
+    self.Signature = nil
 end
 
 -- ====================== INSTANCES ======================
@@ -1720,6 +1870,8 @@ local GameInst = Game.new()
 GameInst:Start()
 local ExtrasInst = Extras.new()
 ExtrasInst:Start()
+local WorldInst = World.new()
+WorldInst:Start()
 
 -- ====================== UPDATER ======================
 local Updater = {}
@@ -1879,6 +2031,17 @@ visOther:AddToggle("CrosshairEnabled", {
 })
 visOther:AddSlider("Fov", { Text = "Field of View", Default = 70, Min = 30, Max = 140, Rounding = 0, Callback = function(v) setFov(v) end })
 
+local worldGroup = Tabs.Visuals:AddRightGroupbox("World")
+worldGroup:AddToggle("WorldColor", { Text = "World Color", Default = false, Callback = function(v) state.WorldColor = v end })
+worldGroup:AddLabel("Tint"):AddColorPicker("WorldColorValue", {
+    Default = Color3.fromRGB(255, 255, 255),
+    Callback = function(v) state.WorldColorValue = v end,
+})
+worldGroup:AddSlider("WorldSaturation", { Text = "Saturation", Default = 0, Min = -100, Max = 100, Rounding = 0, Callback = function(v) state.WorldSaturation = v end })
+worldGroup:AddSlider("WorldBrightness", { Text = "Brightness", Default = 0, Min = -100, Max = 100, Rounding = 0, Callback = function(v) state.WorldBrightness = v end })
+worldGroup:AddToggle("WorldFog", { Text = "Fog", Default = false, Callback = function(v) state.WorldFog = v end })
+worldGroup:AddSlider("WorldFogEnd", { Text = "Fog Distance", Default = 1000, Min = 50, Max = 5000, Rounding = 0, Callback = function(v) state.WorldFogEnd = v end })
+
 -- MISC
 local movGroup = Tabs.Misc:AddLeftGroupbox("Movement")
 movGroup:AddToggle("BhopEnabled", {
@@ -1900,6 +2063,10 @@ movGroup:AddToggle("FlyEnabled", {
         if v then FlyInst:Start() else FlyInst:Stop() end
     end,
 })
+
+local weaponGroup = Tabs.Misc:AddLeftGroupbox("Weapons")
+weaponGroup:AddToggle("NoSpread", { Text = "No Spread", Default = false, Callback = function(v) state.NoSpread = v end })
+weaponGroup:AddToggle("NoRecoil", { Text = "No Recoil", Default = false, Callback = function(v) state.NoRecoil = v end })
 
 local miscOther = Tabs.Misc:AddRightGroupbox("Other")
 miscOther:AddToggle("TextureBugEnabled", {
@@ -2025,6 +2192,7 @@ pcall(function()
         TextureBug = TextureBugInst,
         Recon = ReconInst,
         Extras = ExtrasInst,
+        World = WorldInst,
         Updater = Updater,
         Version = SCRIPT_VERSION,
         Game = GameInst,
