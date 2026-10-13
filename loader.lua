@@ -10,7 +10,7 @@
     Menu key: DELETE
 ]]
 
-local SCRIPT_VERSION = "2.7"
+local SCRIPT_VERSION = "2.8"
 local LOADER_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"
 local VERSION_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/VERSION"
 
@@ -1384,6 +1384,46 @@ function Recon:FindController()
     end
 end
 
+function Recon:FindSpread()
+    self:Add("===== 'Spread' OBJECTS =====")
+    local n = 0
+    pcall(function()
+        for _, obj in ipairs(game:GetDescendants()) do
+            if obj.Name == "Spread" then
+                n = n + 1
+                local val = "?"
+                pcall(function() val = tostring(obj.Value) end)
+                self:Add(obj:GetFullName() .. "  [" .. obj.ClassName .. "] = " .. val)
+            end
+        end
+    end)
+    if n == 0 then self:Add("(no objects named 'Spread' found anywhere)") end
+end
+
+function Recon:FindRecoil()
+    self:Add("===== RECOIL CONTROLLER =====")
+    local n = 0
+    pcall(function()
+        for _, obj in ipairs(getgc(true)) do
+            if type(obj) == "table" then
+                local kx = rawget(obj, "RecoilX") and "RecoilX" or (rawget(obj, "recoilX") and "recoilX")
+                local ky = rawget(obj, "RecoilY") and "RecoilY" or (rawget(obj, "recoilY") and "recoilY")
+                if kx or ky then
+                    n = n + 1
+                    self:Add("#" .. n .. "  keys: " .. tostring(kx) .. " / " .. tostring(ky))
+                    for k, v in pairs(obj) do
+                        local tv = type(v)
+                        if tv ~= "table" and tv ~= "function" then
+                            self:Add("    ." .. tostring(k) .. " = " .. tostring(v))
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if n == 0 then self:Add("(no table with RecoilX/RecoilY in getgc)") end
+end
+
 -- log everything the server sends to the client
 function Recon:ToggleRemoteReceiver()
     if self.Receiving then
@@ -1770,21 +1810,35 @@ function Extras:DoAutoStrafe(character, humanoid, root)
     root.AssemblyLinearVelocity = Vector3.new(new.X, vel.Y, new.Z)
 end
 
--- NoSpread: zero every "Spread" value under ReplicatedStorage.Weapons.
--- ponytail: scan ONCE (the weapon tree is huge - GetDescendants every few
--- seconds tanks the framerate). Re-zero cached values periodically instead.
+-- NoSpread: zero every "Spread" value (and its children) so shots are dead-centre.
+-- Scans ReplicatedStorage.Weapons once; re-zeroes the equipped weapon each frame.
+function Extras:ZeroSpreadIn(container)
+    for _, obj in ipairs(container:GetDescendants()) do
+        if obj.Name == "Spread" then
+            if obj:IsA("ValueBase") then
+                if self.SpreadSaved[obj] == nil then self.SpreadSaved[obj] = obj.Value end
+                if obj.Value ~= 0 then obj.Value = 0 end
+            end
+            for _, child in ipairs(obj:GetChildren()) do
+                if child:IsA("ValueBase") then
+                    if self.SpreadSaved[child] == nil then self.SpreadSaved[child] = child.Value end
+                    if child.Value ~= 0 then child.Value = 0 end
+                end
+            end
+        end
+    end
+end
+
 function Extras:ScanSpread()
     self.SpreadSaved = self.SpreadSaved or {}
     local weapons = game:GetService("ReplicatedStorage"):FindFirstChild("Weapons")
-    if not weapons then return end
-    for _, obj in ipairs(weapons:GetDescendants()) do
-        if obj.Name == "Spread" and obj:IsA("ValueBase") then
-            if self.SpreadSaved[obj] == nil then
-                self.SpreadSaved[obj] = obj.Value
-            end
-            obj.Value = 0
-        end
+    if weapons then
+        self:ZeroSpreadIn(weapons)
     end
+    local n = 0
+    for _ in pairs(self.SpreadSaved) do n = n + 1 end
+    self.SpreadCount = n
+    print("[CBX] NoSpread: zeroed " .. n .. " Spread value(s)")
 end
 
 function Extras:UpdateSpread(dt)
@@ -1792,10 +1846,16 @@ function Extras:UpdateSpread(dt)
         self:RestoreSpread()
         return
     end
-    if not self.SpreadSaved then
+    if not self.SpreadScanned then
+        self.SpreadScanned = true
         self:ScanSpread()
     end
-    -- cheap re-zero of the cached values only
+    -- zero spread on the local character (equipped weapon) every frame - cheap
+    local character = LocalPlayer.Character
+    if character and self.SpreadSaved then
+        self:ZeroSpreadIn(character)
+    end
+    -- re-zero the cached template values every 2s
     self.SpreadTimer = (self.SpreadTimer or 0) + (dt or 0)
     if self.SpreadTimer < 2 then return end
     self.SpreadTimer = 0
@@ -1815,21 +1875,34 @@ function Extras:RestoreSpread()
     end
     self.SpreadSaved = nil
     self.SpreadTimer = nil
+    self.SpreadScanned = false
 end
 
--- NoRecoil: find the game controller table holding RecoilX/RecoilY and zero them.
--- ponytail: getgc(true) is expensive, so scan at most 5 times (1s apart), never per frame
+-- NoRecoil: find the controller table holding RecoilX/RecoilY (case variants)
 function Extras:FindRecoilController()
     if self.RecoilController then return self.RecoilController end
     if type(getgc) ~= "function" then return nil end
     local ok, gc = pcall(getgc, true)
     if not ok or type(gc) ~= "table" then return nil end
     for _, obj in ipairs(gc) do
-        if type(obj) == "table" and rawget(obj, "RecoilX") ~= nil and rawget(obj, "RecoilY") ~= nil then
-            self.RecoilController = obj
-            return obj
+        if type(obj) == "table" then
+            local kx, ky
+            for _, k in ipairs({ "RecoilX", "recoilX", "Recoilx", "recoilx" }) do
+                if rawget(obj, k) ~= nil then kx = k break end
+            end
+            for _, k in ipairs({ "RecoilY", "recoilY", "Recoily", "recoily" }) do
+                if rawget(obj, k) ~= nil then ky = k break end
+            end
+            if kx and ky then
+                self.RecoilController = obj
+                self.RecoilKeyX = kx
+                self.RecoilKeyY = ky
+                print("[CBX] NoRecoil: controller found (" .. kx .. "/" .. ky .. ")")
+                return obj
+            end
         end
     end
+    warn("[CBX] NoRecoil: controller table not found")
     return nil
 end
 
@@ -1840,11 +1913,11 @@ function Extras:UpdateRecoil()
     end
     local controller = self.RecoilController
     if controller then
-        controller.RecoilX = 0
-        controller.RecoilY = 0
+        controller[self.RecoilKeyX] = 0
+        controller[self.RecoilKeyY] = 0
         return
     end
-    -- ponytail: getgc(true) stalls the frame, so scan exactly once per enable
+    -- getgc(true) stalls the frame, so scan exactly once per enable
     if self.RecoilAttempted then return end
     self.RecoilAttempted = true
     task.spawn(function()
@@ -2606,6 +2679,8 @@ gameButton("Find controller (moveFunc etc)", function() ReconInst:FindController
 gameButton("Dump module envs", function() ReconInst:DumpModuleFunctions() end)
 gameButton("Find callers: FireServer", function() ReconInst:FindGCCallers("FireServer") end)
 gameButton("Find callers: Shoot", function() ReconInst:FindGCCallers("Shoot") end)
+gameButton("Find Spread values", function() ReconInst:FindSpread() end)
+gameButton("Find Recoil controller", function() ReconInst:FindRecoil() end)
 gameGroup:AddToggle("ReconRemoteLog", { Text = "Log FireServer calls", Default = false, Callback = function(v)
     if v ~= ReconInst.Logging then ReconInst:ToggleRemoteLog() end
 end })
