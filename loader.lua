@@ -10,7 +10,7 @@
     Menu key: DELETE
 ]]
 
-local SCRIPT_VERSION = "2.5"
+local SCRIPT_VERSION = "2.6"
 local LOADER_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"
 local VERSION_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/VERSION"
 
@@ -92,6 +92,16 @@ local state = {
 
     Trigger = false,
 
+    -- legitbot
+    Legit = false,
+    LegitFov = 150,
+    LegitHitbox = "Head",
+    LegitTeamCheck = false,
+    LegitAlwaysAim = false,
+    LegitAimTime = 0.25,
+    LegitJitter = 0,
+    LegitTrigger = false,
+
     -- ragebot
     Rage = false,
     RageFov = 200,
@@ -115,6 +125,9 @@ local state = {
     EspChams = false,
     EspChamsColor = Color3.fromRGB(84, 134, 255),
     EspHeadDot = false,
+    EspWeapon = false,
+    EspSkeleton = false,
+    Fullbright = false,
 
     Crosshair = false,
 
@@ -186,6 +199,37 @@ local function projectBox(character)
     local min = Vector2.new(cx - width / 2, yTop)
     local max = Vector2.new(cx + width / 2, yBottom)
     return min, max, true
+end
+
+-- R15 joints (Counter-Blox head hitbox is HeadHB)
+local SKELETON_BONES = {
+    { "Head", "UpperTorso" },
+    { "UpperTorso", "LowerTorso" },
+    { "UpperTorso", "LeftUpperArm" },
+    { "LeftUpperArm", "LeftLowerArm" },
+    { "LeftLowerArm", "LeftHand" },
+    { "UpperTorso", "RightUpperArm" },
+    { "RightUpperArm", "RightLowerArm" },
+    { "RightLowerArm", "RightHand" },
+    { "LowerTorso", "LeftUpperLeg" },
+    { "LeftUpperLeg", "LeftLowerLeg" },
+    { "LeftLowerLeg", "LeftFoot" },
+    { "LowerTorso", "RightUpperLeg" },
+    { "RightUpperLeg", "RightLowerLeg" },
+    { "RightLowerLeg", "RightFoot" },
+}
+
+local function projectPart(character, name, camera)
+    local part
+    if name == "Head" then
+        part = character:FindFirstChild("HeadHB") or character:FindFirstChild("Head")
+    else
+        part = character:FindFirstChild(name)
+    end
+    if not part then return nil end
+    local pos, visible = camera:WorldToViewportPoint(part.Position)
+    if not visible then return nil end
+    return Vector2.new(pos.X, pos.Y)
 end
 
 function ESP.new()
@@ -263,6 +307,16 @@ function ESP:CreateObjects()
     o.HeadDot.Visible = false
     o.HeadDot.Color = state.EspColor
 
+    o.Skeleton = {}
+    for i = 1, #SKELETON_BONES do
+        local line = Drawing.new("Line")
+        line.Thickness = 1
+        line.Transparency = 0
+        line.Visible = false
+        line.Color = state.EspColor
+        table.insert(o.Skeleton, line)
+    end
+
     return o
 end
 
@@ -279,6 +333,7 @@ function ESP:SetAlpha(o, a)
     o.Tracer.Transparency = a
     o.Distance.Transparency = a
     o.HeadDot.Transparency = a
+    for _, line in ipairs(o.Skeleton) do line.Transparency = a end
 end
 
 function ESP:Hide(o)
@@ -290,6 +345,7 @@ function ESP:Hide(o)
     o.Tracer.Visible = false
     o.Distance.Visible = false
     o.HeadDot.Visible = false
+    for _, line in ipairs(o.Skeleton) do line.Visible = false end
 end
 
 function ESP:Start()
@@ -395,7 +451,14 @@ function ESP:Render(dt)
         end
 
         if state.Esp and state.EspName then
-            o.Name.Text = player.Name
+            local text = player.Name
+            if state.EspWeapon then
+                local tool = target.character:FindFirstChild("EquippedTool")
+                if tool and tool.Value ~= "" then
+                    text = text .. "  [" .. tostring(tool.Value) .. "]"
+                end
+            end
+            o.Name.Text = text
             o.Name.Position = Vector2.new(cx, min.Y - 15)
             o.Name.Visible = true
         else
@@ -452,6 +515,24 @@ function ESP:Render(dt)
             end
         else
             o.HeadDot.Visible = false
+        end
+
+        if state.Esp and state.EspSkeleton then
+            for i, bone in ipairs(SKELETON_BONES) do
+                local line = o.Skeleton[i]
+                local a = projectPart(target.character, bone[1], camera)
+                local b = projectPart(target.character, bone[2], camera)
+                if a and b then
+                    line.From = a
+                    line.To = b
+                    line.Color = state.EspColor
+                    line.Visible = true
+                else
+                    line.Visible = false
+                end
+            end
+        else
+            for _, line in ipairs(o.Skeleton) do line.Visible = false end
         end
 
         self:SetAlpha(o, target.alpha)
@@ -1690,13 +1771,14 @@ function Extras:DoAutoStrafe(character, humanoid, root)
 end
 
 -- NoSpread: zero every "Spread" value under ReplicatedStorage.Weapons (pivo method)
+-- ponytail: re-scan every 3s instead of every frame; the scan is O(all weapon parts)
 function Extras:UpdateSpread(dt)
     if not state.NoSpread then
         self:RestoreSpread()
         return
     end
     self.SpreadTimer = (self.SpreadTimer or 0) + (dt or 0)
-    if self.SpreadSaved and self.SpreadTimer < 1 then return end
+    if self.SpreadSaved and self.SpreadTimer < 3 then return end
     self.SpreadTimer = 0
     self.SpreadSaved = self.SpreadSaved or {}
 
@@ -1721,11 +1803,14 @@ function Extras:RestoreSpread()
     self.SpreadTimer = nil
 end
 
--- NoRecoil: find the game controller table holding RecoilX/RecoilY and zero them
+-- NoRecoil: find the game controller table holding RecoilX/RecoilY and zero them.
+-- ponytail: getgc(true) is expensive, so scan at most 5 times (1s apart), never per frame
 function Extras:FindRecoilController()
     if self.RecoilController then return self.RecoilController end
     if type(getgc) ~= "function" then return nil end
-    for _, obj in ipairs(getgc(true)) do
+    local ok, gc = pcall(getgc, true)
+    if not ok or type(gc) ~= "table" then return nil end
+    for _, obj in ipairs(gc) do
         if type(obj) == "table" and rawget(obj, "RecoilX") ~= nil and rawget(obj, "RecoilY") ~= nil then
             self.RecoilController = obj
             return obj
@@ -1735,12 +1820,23 @@ function Extras:FindRecoilController()
 end
 
 function Extras:UpdateRecoil()
-    if not state.NoRecoil then return end
-    local controller = self.RecoilController or self:FindRecoilController()
+    if not state.NoRecoil then
+        self.RecoilAttempts = 0
+        self.RecoilNextScan = nil
+        return
+    end
+    local controller = self.RecoilController
     if controller then
         controller.RecoilX = 0
         controller.RecoilY = 0
+        return
     end
+    if (self.RecoilAttempts or 0) >= 5 then return end
+    local now = os.clock()
+    if self.RecoilNextScan and now < self.RecoilNextScan then return end
+    self.RecoilNextScan = now + 1
+    self.RecoilAttempts = (self.RecoilAttempts or 0) + 1
+    self:FindRecoilController()
 end
 
 function Extras:Step(dt)
@@ -1798,6 +1894,8 @@ function World.new()
     self.SavedOutdoor = self.Lighting.OutdoorAmbient
     self.SavedFogEnd = self.Lighting.FogEnd
     self.SavedFogColor = self.Lighting.FogColor
+    self.SavedBrightness = self.Lighting.Brightness
+    self.SavedShadows = self.Lighting.GlobalShadows
     self.Signature = nil
     self.Effect = Instance.new("ColorCorrectionEffect")
     self.Effect.Name = "CBXWorld"
@@ -1813,10 +1911,12 @@ function World:Apply()
         tostring(state.WorldBrightness),
         tostring(state.WorldFog),
         tostring(state.WorldFogEnd),
+        tostring(state.Fullbright),
     }, "|")
     if sig == self.Signature then return end
     self.Signature = sig
 
+    -- world color / saturation / fog first
     if state.WorldColor then
         self.Effect.Parent = self.Lighting
         self.Effect.TintColor = state.WorldColorValue
@@ -1838,6 +1938,17 @@ function World:Apply()
         self.Lighting.FogEnd = self.SavedFogEnd
         self.Lighting.FogColor = self.SavedFogColor
     end
+
+    -- Fullbright applied last so it wins over the world color tint
+    if state.Fullbright then
+        self.Lighting.Brightness = 3
+        self.Lighting.GlobalShadows = false
+        self.Lighting.Ambient = Color3.new(1, 1, 1)
+        self.Lighting.OutdoorAmbient = Color3.new(1, 1, 1)
+    else
+        self.Lighting.Brightness = self.SavedBrightness
+        self.Lighting.GlobalShadows = self.SavedShadows
+    end
 end
 
 function World:Start()
@@ -1852,7 +1963,307 @@ function World:Stop()
     self.Lighting.OutdoorAmbient = self.SavedOutdoor
     self.Lighting.FogEnd = self.SavedFogEnd
     self.Lighting.FogColor = self.SavedFogColor
+    self.Lighting.Brightness = self.SavedBrightness
+    self.Lighting.GlobalShadows = self.SavedShadows
     self.Signature = nil
+end
+
+-- ====================== AIM CURVE (legitbot) ======================
+-- A user-editable curve mapping aim progress (0..1) to how far the crosshair
+-- has travelled (0..1). Steep early = snappy, steep late = smooth settle.
+local AimCurve = {}
+AimCurve.Points = { 0, 0.2, 0.45, 0.75, 1 }
+AimCurve.N = 5
+
+function AimCurve.Sample(t)
+    t = math.clamp(t, 0, 1)
+    local x = t * (AimCurve.N - 1)
+    local i = math.floor(x) + 1
+    local f = x - (i - 1)
+    local a = AimCurve.Points[i]
+    local b = AimCurve.Points[math.min(i + 1, AimCurve.N)]
+    return a + (b - a) * f
+end
+
+function AimCurve.SetPreset(name)
+    if name == "Linear" then
+        AimCurve.Points = { 0, 0.25, 0.5, 0.75, 1 }
+    elseif name == "Ease In" then
+        AimCurve.Points = { 0, 0.03, 0.1, 0.35, 1 }
+    elseif name == "Ease Out" then
+        AimCurve.Points = { 0, 0.55, 0.82, 0.95, 1 }
+    elseif name == "Snap" then
+        AimCurve.Points = { 0, 0.85, 0.95, 0.99, 1 }
+    end
+end
+
+-- ---------- curve editor (floating panel) ----------
+local Graph = {}
+Graph.__index = Graph
+
+local function round(parent, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r)
+    c.Parent = parent
+    return c
+end
+
+function Graph.new()
+    local self = setmetatable({}, Graph)
+    self.Knobs = {}
+    self.Segments = {}
+    self.Dragging = nil
+    self:_Build()
+    return self
+end
+
+function Graph:_Build()
+    local pg = LocalPlayer:WaitForChild("PlayerGui")
+    self.Gui = Instance.new("ScreenGui")
+    self.Gui.Name = "CBXGraph"
+    self.Gui.ResetOnSpawn = false
+    self.Gui.DisplayOrder = 99998
+    self.Gui.Enabled = false
+    self.Gui.Parent = pg
+
+    self.Frame = Instance.new("Frame")
+    self.Frame.Size = UDim2.new(0, 300, 0, 250)
+    self.Frame.Position = UDim2.new(0.5, -150, 0.5, -125)
+    self.Frame.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
+    self.Frame.BorderSizePixel = 0
+    self.Frame.Active = true
+    self.Frame.Draggable = true
+    self.Frame.Parent = self.Gui
+    round(self.Frame, 8)
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(50, 50, 60)
+    stroke.Parent = self.Frame
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -20, 0, 30)
+    title.Position = UDim2.new(0, 12, 0, 4)
+    title.BackgroundTransparency = 1
+    title.Text = "AIM CURVE  (drag points)"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 13
+    title.TextColor3 = Color3.fromRGB(230, 230, 235)
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = self.Frame
+
+    self.Area = Instance.new("Frame")
+    self.Area.Size = UDim2.new(1, -40, 1, -70)
+    self.Area.Position = UDim2.new(0, 20, 0, 40)
+    self.Area.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+    self.Area.BorderSizePixel = 0
+    self.Area.Parent = self.Frame
+    round(self.Area, 6)
+
+    self.LineFrom = Instance.new("Frame")  -- thin preview line
+    self.LineFrom.Size = UDim2.new(1, 0, 0, 1)
+    self.LineFrom.Position = UDim2.new(0, 0, 0, 0)
+    self.LineFrom.BackgroundColor3 = Color3.fromRGB(84, 134, 255)
+    self.LineFrom.BorderSizePixel = 0
+    self.LineFrom.ZIndex = 2
+
+    self.KnobContainer = Instance.new("Frame")
+    self.KnobContainer.Size = UDim2.new(1, 0, 1, 0)
+    self.KnobContainer.BackgroundTransparency = 1
+    self.KnobContainer.ZIndex = 3
+    self.KnobContainer.Parent = self.Area
+
+    local w, h = 260, 180
+    for i = 1, AimCurve.N do
+        local seg = Instance.new("Frame")
+        seg.BackgroundColor3 = Color3.fromRGB(84, 134, 255)
+        seg.BorderSizePixel = 0
+        seg.AnchorPoint = Vector2.new(0, 0.5)
+        seg.ZIndex = 2
+        seg.Parent = self.Area
+        self.Segments[i] = seg
+
+        local knob = Instance.new("TextButton")
+        knob.Size = UDim2.new(0, 12, 0, 12)
+        knob.AnchorPoint = Vector2.new(0.5, 0.5)
+        knob.BackgroundColor3 = Color3.fromRGB(84, 134, 255)
+        knob.BorderSizePixel = 0
+        knob.Text = ""
+        knob.ZIndex = 4
+        knob.Parent = self.KnobContainer
+        round(knob, 6)
+        self.Knobs[i] = knob
+
+        knob.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                self.Dragging = i
+            end
+        end)
+    end
+
+    UserInputService.InputChanged:Connect(function(input)
+        if self.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            self:_DragTo(input.Position.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            self.Dragging = nil
+        end
+    end)
+
+    self:_Redraw()
+end
+
+function Graph:SetVisible(v)
+    self.Visible = v
+    self.Gui.Enabled = v
+    if v then self:_Redraw() end
+end
+
+function Graph:_DragTo(mouseY)
+    local i = self.Dragging
+    if not i then return end
+    local area = self.Area
+    local h = area.AbsoluteSize.Y
+    if h <= 0 then return end
+    local rel = (mouseY - area.AbsolutePosition.Y) / h
+    AimCurve.Points[i] = math.clamp(1 - rel, 0, 1)
+    if i == 1 then AimCurve.Points[i] = 0 end
+    if i == AimCurve.N then AimCurve.Points[i] = 1 end
+    self:_Redraw()
+end
+
+function Graph:_Redraw()
+    local area = self.Area
+    local w = area.AbsoluteSize.X
+    local h = area.AbsoluteSize.Y
+    if w <= 0 or h <= 0 then return end
+    local n = AimCurve.N
+    local function pos(i)
+        return Vector2.new((i - 1) / (n - 1) * w, (1 - AimCurve.Points[i]) * h)
+    end
+    for i = 1, n do
+        local p = pos(i)
+        self.Knobs[i].Position = UDim2.new(0, p.X, 0, p.Y)
+    end
+    for i = 1, n - 1 do
+        local p1, p2 = pos(i), pos(i + 1)
+        local dx, dy = p2.X - p1.X, p2.Y - p1.Y
+        local len = math.sqrt(dx * dx + dy * dy)
+        local seg = self.Segments[i]
+        seg.Size = UDim2.new(0, len, 0, 2)
+        seg.Position = UDim2.new(0, p1.X, 0, p1.Y)
+        seg.Rotation = math.deg(math.atan2(dy, dx))
+    end
+end
+
+-- ====================== LEGITBOT ======================
+local Legitbot = {}
+Legitbot.__index = Legitbot
+
+function Legitbot.new()
+    local self = setmetatable({}, Legitbot)
+    self.Running = false
+    self.StartCFrame = nil
+    self.Progress = 0
+    self.Target = nil
+    self.LastFire = 0
+    return self
+end
+
+function Legitbot:Start()
+    if self.Running then return end
+    self.Running = true
+    RunService:BindToRenderStep("CBXLegitbot", Enum.RenderPriority.Camera.Value, function(dt)
+        self:Step(dt)
+    end)
+end
+
+function Legitbot:Stop()
+    if not self.Running then return end
+    self.Running = false
+    RunService:UnbindFromRenderStep("CBXLegitbot")
+    self.StartCFrame = nil
+    self.Target = nil
+end
+
+function Legitbot:Hitbox(player)
+    local character = player.Character
+    if not character then return nil end
+    if state.LegitHitbox == "Torso" then
+        return character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
+    end
+    return character:FindFirstChild("HeadHB") or character:FindFirstChild("Head")
+end
+
+function Legitbot:FindTarget(camera)
+    local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+    local best, bestScore = nil, math.huge
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and not (state.LegitTeamCheck and sameTeam(player)) then
+            local character = player.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            if character and humanoid and humanoid.Health > 0 then
+                local part = self:Hitbox(player)
+                if part then
+                    local pos, onScreen = camera:WorldToScreenPoint(part.Position)
+                    if onScreen then
+                        local d = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+                        if d <= state.LegitFov and d < bestScore then
+                            bestScore = d
+                            best = part
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+function Legitbot:Step(dt)
+    if not state.Legit then
+        self.Target = nil
+        self.StartCFrame = nil
+        return
+    end
+    if not state.LegitAlwaysAim and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+        self.Target = nil
+        self.StartCFrame = nil
+        return
+    end
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+
+    local target = self:FindTarget(camera)
+    if not target then
+        self.Target = nil
+        self.StartCFrame = nil
+        return
+    end
+
+    if self.Target ~= target then
+        self.Target = target
+        self.StartCFrame = camera.CFrame
+        self.Progress = 0
+    end
+
+    self.Progress = math.min(1, self.Progress + (dt or 0.016) / math.max(state.LegitAimTime, 0.01))
+    local alpha = AimCurve.Sample(self.Progress)
+    if state.LegitJitter > 0 then
+        alpha = math.clamp(alpha + (math.random() - 0.5) * state.LegitJitter * 0.01, 0, 1)
+    end
+
+    local goal = CFrame.lookAt(camera.CFrame.Position, target.Position)
+    camera.CFrame = self.StartCFrame:Lerp(goal, alpha)
+
+    -- optional triggerbot once basically on target
+    if state.LegitTrigger and self.Progress >= 0.95 then
+        local now = os.clock()
+        if now - self.LastFire >= 0.1 then
+            self.LastFire = now
+            if type(mouse1click) == "function" then pcall(mouse1click) end
+        end
+    end
 end
 
 -- ====================== INSTANCES ======================
@@ -1872,6 +2283,8 @@ local ExtrasInst = Extras.new()
 ExtrasInst:Start()
 local WorldInst = World.new()
 WorldInst:Start()
+local GraphInst = Graph.new()
+local LegitbotInst = Legitbot.new()
 
 -- ====================== UPDATER ======================
 local Updater = {}
@@ -1956,6 +2369,35 @@ aimGroup:AddToggle("AimVisible", { Text = "Visible Check", Default = false, Call
 aimGroup:AddToggle("AimHold", { Text = "Hold RMB", Default = true, Callback = function(v) state.AimHold = v end })
 aimGroup:AddToggle("AimFovCircle", { Text = "FOV Circle", Default = true, Callback = function(v) state.AimFovCircle = v end })
 
+local legitGroup = Tabs.Rage:AddLeftGroupbox("Legitbot")
+legitGroup:AddToggle("LegitEnabled", {
+    Text = "Enabled",
+    Default = false,
+    Callback = function(v)
+        state.Legit = v
+        if v then LegitbotInst:Start() else LegitbotInst:Stop() end
+    end,
+})
+legitGroup:AddToggle("LegitAlwaysAim", { Text = "Always aim (else hold RMB)", Default = false, Callback = function(v) state.LegitAlwaysAim = v end })
+legitGroup:AddSlider("LegitFov", { Text = "FOV", Default = 150, Min = 10, Max = 600, Rounding = 0, Suffix = "px", Callback = function(v) state.LegitFov = v end })
+legitGroup:AddDropdown("LegitHitbox", { Text = "Hitbox", Values = { "Head", "Torso" }, Default = 1, Callback = function(v) state.LegitHitbox = v end })
+legitGroup:AddSlider("LegitAimTime", { Text = "Aim Time", Default = 0.25, Min = 0.02, Max = 1.5, Rounding = 2, Suffix = "s", Callback = function(v) state.LegitAimTime = v end })
+legitGroup:AddSlider("LegitJitter", { Text = "Jitter", Default = 0, Min = 0, Max = 100, Rounding = 0, Callback = function(v) state.LegitJitter = v end })
+legitGroup:AddToggle("LegitTrigger", { Text = "Auto fire when on target", Default = false, Callback = function(v) state.LegitTrigger = v end })
+legitGroup:AddToggle("LegitTeamCheck", { Text = "Team Check", Default = false, Callback = function(v) state.LegitTeamCheck = v end })
+legitGroup:AddDropdown("LegitPreset", {
+    Text = "Curve Preset",
+    Values = { "Linear", "Ease In", "Ease Out", "Snap", "Custom" },
+    Default = 1,
+    Callback = function(v)
+        if v ~= "Custom" then
+            AimCurve.SetPreset(v)
+            GraphInst:_Redraw()
+        end
+    end,
+})
+legitGroup:AddToggle("ShowAimGraph", { Text = "Show Aim Graph", Default = false, Callback = function(v) GraphInst:SetVisible(v) end })
+
 local triggerGroup = Tabs.Rage:AddRightGroupbox("Triggerbot")
 triggerGroup:AddToggle("TriggerEnabled", {
     Text = "Auto Fire",
@@ -2001,6 +2443,8 @@ espGroup:AddToggle("EspTracer", { Text = "Tracer", Default = false, Callback = f
 espGroup:AddToggle("EspDistance", { Text = "Distance", Default = false, Callback = function(v) state.EspDistance = v end })
 espGroup:AddToggle("EspTeamCheck", { Text = "Team Check", Default = false, Callback = function(v) state.EspTeamCheck = v end })
 espGroup:AddToggle("EspHeadDot", { Text = "Head Dot", Default = false, Callback = function(v) state.EspHeadDot = v end })
+espGroup:AddToggle("EspSkeleton", { Text = "Skeleton", Default = false, Callback = function(v) state.EspSkeleton = v end })
+espGroup:AddToggle("EspWeapon", { Text = "Weapon", Default = false, Callback = function(v) state.EspWeapon = v end })
 espGroup:AddLabel("Box Color"):AddColorPicker("EspColor", {
     Default = Color3.fromRGB(84, 134, 255),
     Callback = function(v) state.EspColor = v end,
@@ -2032,6 +2476,7 @@ visOther:AddToggle("CrosshairEnabled", {
 visOther:AddSlider("Fov", { Text = "Field of View", Default = 70, Min = 30, Max = 140, Rounding = 0, Callback = function(v) setFov(v) end })
 
 local worldGroup = Tabs.Visuals:AddRightGroupbox("World")
+worldGroup:AddToggle("Fullbright", { Text = "Fullbright", Default = false, Callback = function(v) state.Fullbright = v end })
 worldGroup:AddToggle("WorldColor", { Text = "World Color", Default = false, Callback = function(v) state.WorldColor = v end })
 worldGroup:AddLabel("Tint"):AddColorPicker("WorldColorValue", {
     Default = Color3.fromRGB(255, 255, 255),
@@ -2193,6 +2638,9 @@ pcall(function()
         Recon = ReconInst,
         Extras = ExtrasInst,
         World = WorldInst,
+        Legitbot = LegitbotInst,
+        Graph = GraphInst,
+        AimCurve = AimCurve,
         Updater = Updater,
         Version = SCRIPT_VERSION,
         Game = GameInst,
