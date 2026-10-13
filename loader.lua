@@ -10,7 +10,7 @@
     Menu key: DELETE
 ]]
 
-local SCRIPT_VERSION = "2.6"
+local SCRIPT_VERSION = "2.7"
 local LOADER_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"
 local VERSION_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/VERSION"
 
@@ -1770,18 +1770,11 @@ function Extras:DoAutoStrafe(character, humanoid, root)
     root.AssemblyLinearVelocity = Vector3.new(new.X, vel.Y, new.Z)
 end
 
--- NoSpread: zero every "Spread" value under ReplicatedStorage.Weapons (pivo method)
--- ponytail: re-scan every 3s instead of every frame; the scan is O(all weapon parts)
-function Extras:UpdateSpread(dt)
-    if not state.NoSpread then
-        self:RestoreSpread()
-        return
-    end
-    self.SpreadTimer = (self.SpreadTimer or 0) + (dt or 0)
-    if self.SpreadSaved and self.SpreadTimer < 3 then return end
-    self.SpreadTimer = 0
+-- NoSpread: zero every "Spread" value under ReplicatedStorage.Weapons.
+-- ponytail: scan ONCE (the weapon tree is huge - GetDescendants every few
+-- seconds tanks the framerate). Re-zero cached values periodically instead.
+function Extras:ScanSpread()
     self.SpreadSaved = self.SpreadSaved or {}
-
     local weapons = game:GetService("ReplicatedStorage"):FindFirstChild("Weapons")
     if not weapons then return end
     for _, obj in ipairs(weapons:GetDescendants()) do
@@ -1790,6 +1783,27 @@ function Extras:UpdateSpread(dt)
                 self.SpreadSaved[obj] = obj.Value
             end
             obj.Value = 0
+        end
+    end
+end
+
+function Extras:UpdateSpread(dt)
+    if not state.NoSpread then
+        self:RestoreSpread()
+        return
+    end
+    if not self.SpreadSaved then
+        self:ScanSpread()
+    end
+    -- cheap re-zero of the cached values only
+    self.SpreadTimer = (self.SpreadTimer or 0) + (dt or 0)
+    if self.SpreadTimer < 2 then return end
+    self.SpreadTimer = 0
+    for obj in pairs(self.SpreadSaved or {}) do
+        if obj.Parent then
+            if obj.Value ~= 0 then obj.Value = 0 end
+        else
+            self.SpreadSaved[obj] = nil
         end
     end
 end
@@ -1821,8 +1835,7 @@ end
 
 function Extras:UpdateRecoil()
     if not state.NoRecoil then
-        self.RecoilAttempts = 0
-        self.RecoilNextScan = nil
+        self.RecoilAttempted = false
         return
     end
     local controller = self.RecoilController
@@ -1831,12 +1844,15 @@ function Extras:UpdateRecoil()
         controller.RecoilY = 0
         return
     end
-    if (self.RecoilAttempts or 0) >= 5 then return end
-    local now = os.clock()
-    if self.RecoilNextScan and now < self.RecoilNextScan then return end
-    self.RecoilNextScan = now + 1
-    self.RecoilAttempts = (self.RecoilAttempts or 0) + 1
-    self:FindRecoilController()
+    -- ponytail: getgc(true) stalls the frame, so scan exactly once per enable
+    if self.RecoilAttempted then return end
+    self.RecoilAttempted = true
+    task.spawn(function()
+        task.wait(0.5)
+        if state.NoRecoil then
+            self:FindRecoilController()
+        end
+    end)
 end
 
 function Extras:Step(dt)
