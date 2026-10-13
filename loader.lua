@@ -10,7 +10,7 @@
     Menu key: DELETE
 ]]
 
-local SCRIPT_VERSION = "2.8"
+local SCRIPT_VERSION = "2.9"
 local LOADER_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/loader.lua"
 local VERSION_URL = "https://cdn.jsdelivr.net/gh/scramblepaws/CounterBloxExtension@main/VERSION"
 
@@ -98,7 +98,7 @@ local state = {
     LegitHitbox = "Head",
     LegitTeamCheck = false,
     LegitAlwaysAim = false,
-    LegitAimTime = 0.25,
+    LegitSmooth = 5,
     LegitJitter = 0,
     LegitTrigger = false,
 
@@ -2057,194 +2057,6 @@ function World:Stop()
     self.Signature = nil
 end
 
--- ====================== AIM CURVE (legitbot) ======================
--- A user-editable curve mapping aim progress (0..1) to how far the crosshair
--- has travelled (0..1). Steep early = snappy, steep late = smooth settle.
-local AimCurve = {}
-AimCurve.Points = { 0, 0.2, 0.45, 0.75, 1 }
-AimCurve.N = 5
-
-function AimCurve.Sample(t)
-    t = math.clamp(t, 0, 1)
-    local x = t * (AimCurve.N - 1)
-    local i = math.floor(x) + 1
-    local f = x - (i - 1)
-    local a = AimCurve.Points[i]
-    local b = AimCurve.Points[math.min(i + 1, AimCurve.N)]
-    return a + (b - a) * f
-end
-
-function AimCurve.SetPreset(name)
-    if name == "Linear" then
-        AimCurve.Points = { 0, 0.25, 0.5, 0.75, 1 }
-    elseif name == "Ease In" then
-        AimCurve.Points = { 0, 0.03, 0.1, 0.35, 1 }
-    elseif name == "Ease Out" then
-        AimCurve.Points = { 0, 0.55, 0.82, 0.95, 1 }
-    elseif name == "Snap" then
-        AimCurve.Points = { 0, 0.85, 0.95, 0.99, 1 }
-    end
-end
-
--- ---------- curve editor (floating panel) ----------
-local Graph = {}
-Graph.__index = Graph
-
-local function round(parent, r)
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, r)
-    c.Parent = parent
-    return c
-end
-
-function Graph.new()
-    local self = setmetatable({}, Graph)
-    self.Knobs = {}
-    self.Segments = {}
-    self.Dragging = nil
-    self:_Build()
-    return self
-end
-
-function Graph:_Build()
-    local pg = LocalPlayer:WaitForChild("PlayerGui")
-    self.Gui = Instance.new("ScreenGui")
-    self.Gui.Name = "CBXGraph"
-    self.Gui.ResetOnSpawn = false
-    self.Gui.DisplayOrder = 99998
-    self.Gui.Enabled = false
-    self.Gui.Parent = pg
-
-    self.Frame = Instance.new("Frame")
-    self.Frame.Size = UDim2.new(0, 300, 0, 250)
-    self.Frame.Position = UDim2.new(0.5, -150, 0.5, -125)
-    self.Frame.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
-    self.Frame.BorderSizePixel = 0
-    self.Frame.Active = true
-    self.Frame.Draggable = true
-    self.Frame.Parent = self.Gui
-    round(self.Frame, 8)
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(50, 50, 60)
-    stroke.Parent = self.Frame
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -20, 0, 30)
-    title.Position = UDim2.new(0, 12, 0, 4)
-    title.BackgroundTransparency = 1
-    title.Text = "AIM CURVE  (drag points)"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 13
-    title.TextColor3 = Color3.fromRGB(230, 230, 235)
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Parent = self.Frame
-
-    self.Area = Instance.new("Frame")
-    self.Area.Size = UDim2.new(1, -40, 1, -70)
-    self.Area.Position = UDim2.new(0, 20, 0, 40)
-    self.Area.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
-    self.Area.BorderSizePixel = 0
-    self.Area.Parent = self.Frame
-    round(self.Area, 6)
-
-    self.LineFrom = Instance.new("Frame")  -- thin preview line
-    self.LineFrom.Size = UDim2.new(1, 0, 0, 1)
-    self.LineFrom.Position = UDim2.new(0, 0, 0, 0)
-    self.LineFrom.BackgroundColor3 = Color3.fromRGB(84, 134, 255)
-    self.LineFrom.BorderSizePixel = 0
-    self.LineFrom.ZIndex = 2
-
-    self.KnobContainer = Instance.new("Frame")
-    self.KnobContainer.Size = UDim2.new(1, 0, 1, 0)
-    self.KnobContainer.BackgroundTransparency = 1
-    self.KnobContainer.ZIndex = 3
-    self.KnobContainer.Parent = self.Area
-
-    local w, h = 260, 180
-    for i = 1, AimCurve.N do
-        local seg = Instance.new("Frame")
-        seg.BackgroundColor3 = Color3.fromRGB(84, 134, 255)
-        seg.BorderSizePixel = 0
-        seg.AnchorPoint = Vector2.new(0, 0.5)
-        seg.ZIndex = 2
-        seg.Parent = self.Area
-        self.Segments[i] = seg
-
-        local knob = Instance.new("TextButton")
-        knob.Size = UDim2.new(0, 12, 0, 12)
-        knob.AnchorPoint = Vector2.new(0.5, 0.5)
-        knob.BackgroundColor3 = Color3.fromRGB(84, 134, 255)
-        knob.BorderSizePixel = 0
-        knob.Text = ""
-        knob.ZIndex = 4
-        knob.Parent = self.KnobContainer
-        round(knob, 6)
-        self.Knobs[i] = knob
-
-        knob.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                self.Dragging = i
-            end
-        end)
-    end
-
-    UserInputService.InputChanged:Connect(function(input)
-        if self.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            self:_DragTo(input.Position.Y)
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            self.Dragging = nil
-        end
-    end)
-
-    self:_Redraw()
-end
-
-function Graph:SetVisible(v)
-    self.Visible = v
-    self.Gui.Enabled = v
-    if v then self:_Redraw() end
-end
-
-function Graph:_DragTo(mouseY)
-    local i = self.Dragging
-    if not i then return end
-    local area = self.Area
-    local h = area.AbsoluteSize.Y
-    if h <= 0 then return end
-    local rel = (mouseY - area.AbsolutePosition.Y) / h
-    AimCurve.Points[i] = math.clamp(1 - rel, 0, 1)
-    if i == 1 then AimCurve.Points[i] = 0 end
-    if i == AimCurve.N then AimCurve.Points[i] = 1 end
-    self:_Redraw()
-end
-
-function Graph:_Redraw()
-    local area = self.Area
-    local w = area.AbsoluteSize.X
-    local h = area.AbsoluteSize.Y
-    if w <= 0 or h <= 0 then return end
-    local n = AimCurve.N
-    local function pos(i)
-        return Vector2.new((i - 1) / (n - 1) * w, (1 - AimCurve.Points[i]) * h)
-    end
-    for i = 1, n do
-        local p = pos(i)
-        self.Knobs[i].Position = UDim2.new(0, p.X, 0, p.Y)
-    end
-    for i = 1, n - 1 do
-        local p1, p2 = pos(i), pos(i + 1)
-        local dx, dy = p2.X - p1.X, p2.Y - p1.Y
-        local len = math.sqrt(dx * dx + dy * dy)
-        local seg = self.Segments[i]
-        seg.Size = UDim2.new(0, len, 0, 2)
-        seg.Position = UDim2.new(0, p1.X, 0, p1.Y)
-        seg.Rotation = math.deg(math.atan2(dy, dx))
-    end
-end
-
 -- ====================== LEGITBOT ======================
 local Legitbot = {}
 Legitbot.__index = Legitbot
@@ -2312,12 +2124,10 @@ end
 function Legitbot:Step(dt)
     if not state.Legit then
         self.Target = nil
-        self.StartCFrame = nil
         return
     end
     if not state.LegitAlwaysAim and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
         self.Target = nil
-        self.StartCFrame = nil
         return
     end
     local camera = workspace.CurrentCamera
@@ -2326,33 +2136,85 @@ function Legitbot:Step(dt)
     local target = self:FindTarget(camera)
     if not target then
         self.Target = nil
-        self.StartCFrame = nil
         return
     end
+    self.Target = target
 
-    if self.Target ~= target then
-        self.Target = target
-        self.StartCFrame = camera.CFrame
-        self.Progress = 0
-    end
-
-    self.Progress = math.min(1, self.Progress + (dt or 0.016) / math.max(state.LegitAimTime, 0.01))
-    local alpha = AimCurve.Sample(self.Progress)
-    if state.LegitJitter > 0 then
-        alpha = math.clamp(alpha + (math.random() - 0.5) * state.LegitJitter * 0.01, 0, 1)
-    end
-
+    -- smoothness-based aim (higher = slower/more human)
     local goal = CFrame.lookAt(camera.CFrame.Position, target.Position)
-    camera.CFrame = self.StartCFrame:Lerp(goal, alpha)
+    local alpha = math.clamp(1 / math.max(state.LegitSmooth, 1), 0.02, 1)
+    if state.LegitJitter > 0 then
+        alpha = math.clamp(alpha + (math.random() - 0.5) * state.LegitJitter * 0.01, 0.01, 1)
+    end
+    camera.CFrame = camera.CFrame:Lerp(goal, alpha)
 
     -- optional triggerbot once basically on target
-    if state.LegitTrigger and self.Progress >= 0.95 then
+    if state.LegitTrigger and alpha >= 0.5 then
         local now = os.clock()
         if now - self.LastFire >= 0.1 then
             self.LastFire = now
             if type(mouse1click) == "function" then pcall(mouse1click) end
         end
     end
+end
+
+-- ====================== SKIN CHANGER ======================
+-- Counter-Blox stores per-weapon skin selections in
+-- <Player>.SkinFolder.<T|CT>Folder[weapon].Value = skinName.
+local Skins = {}
+Skins.__index = Skins
+
+function Skins.new()
+    return setmetatable({}, Skins)
+end
+
+function Skins:List()
+    local out = {}
+    local skins = game:GetService("ReplicatedStorage"):FindFirstChild("Skins")
+    if skins then
+        for _, w in ipairs(skins:GetChildren()) do
+            table.insert(out, w.Name)
+        end
+        table.sort(out)
+    end
+    return out
+end
+
+function Skins:ListFor(weapon)
+    local out = {}
+    local skins = game:GetService("ReplicatedStorage"):FindFirstChild("Skins")
+    local w = skins and weapon and skins:FindFirstChild(weapon)
+    if w then
+        for _, s in ipairs(w:GetChildren()) do
+            table.insert(out, s.Name)
+        end
+        table.sort(out)
+    end
+    if #out == 0 then table.insert(out, "Stock") end
+    return out
+end
+
+function Skins:Apply(weapon, skin)
+    if not weapon or not skin then return 0 end
+    local folders = {}
+    local playerFolder = LocalPlayer:FindFirstChild("SkinFolder")
+    if playerFolder then table.insert(folders, playerFolder) end
+    local character = LocalPlayer.Character
+    local charFolder = character and character:FindFirstChild("SkinFolder")
+    if charFolder then table.insert(folders, charFolder) end
+
+    local applied = 0
+    for _, folder in ipairs(folders) do
+        for _, team in ipairs({ "TFolder", "CTFolder" }) do
+            local teamFolder = folder:FindFirstChild(team)
+            local value = teamFolder and teamFolder:FindFirstChild(weapon)
+            if value then
+                value.Value = skin
+                applied = applied + 1
+            end
+        end
+    end
+    return applied
 end
 
 -- ====================== INSTANCES ======================
@@ -2372,7 +2234,7 @@ local ExtrasInst = Extras.new()
 ExtrasInst:Start()
 local WorldInst = World.new()
 WorldInst:Start()
-local GraphInst = Graph.new()
+local SkinsInst = Skins.new()
 local LegitbotInst = Legitbot.new()
 
 -- ====================== UPDATER ======================
@@ -2433,8 +2295,9 @@ local Window = Library:CreateWindow({
 local Tabs = {
     Rage = Window:AddTab("Rage"),
     Visuals = Window:AddTab("Visuals"),
+    Movement = Window:AddTab("Movement"),
+    Weapons = Window:AddTab("Weapons"),
     Misc = Window:AddTab("Misc"),
-    Game = Window:AddTab("Game"),
     Developer = Window:AddTab("Developer"),
     ["UI Settings"] = Window:AddTab("UI Settings"),
 }
@@ -2470,22 +2333,10 @@ legitGroup:AddToggle("LegitEnabled", {
 legitGroup:AddToggle("LegitAlwaysAim", { Text = "Always aim (else hold RMB)", Default = false, Callback = function(v) state.LegitAlwaysAim = v end })
 legitGroup:AddSlider("LegitFov", { Text = "FOV", Default = 150, Min = 10, Max = 600, Rounding = 0, Suffix = "px", Callback = function(v) state.LegitFov = v end })
 legitGroup:AddDropdown("LegitHitbox", { Text = "Hitbox", Values = { "Head", "Torso" }, Default = 1, Callback = function(v) state.LegitHitbox = v end })
-legitGroup:AddSlider("LegitAimTime", { Text = "Aim Time", Default = 0.25, Min = 0.02, Max = 1.5, Rounding = 2, Suffix = "s", Callback = function(v) state.LegitAimTime = v end })
+legitGroup:AddSlider("LegitSmooth", { Text = "Smoothness", Default = 5, Min = 1, Max = 30, Rounding = 0, Callback = function(v) state.LegitSmooth = v end })
 legitGroup:AddSlider("LegitJitter", { Text = "Jitter", Default = 0, Min = 0, Max = 100, Rounding = 0, Callback = function(v) state.LegitJitter = v end })
 legitGroup:AddToggle("LegitTrigger", { Text = "Auto fire when on target", Default = false, Callback = function(v) state.LegitTrigger = v end })
 legitGroup:AddToggle("LegitTeamCheck", { Text = "Team Check", Default = false, Callback = function(v) state.LegitTeamCheck = v end })
-legitGroup:AddDropdown("LegitPreset", {
-    Text = "Curve Preset",
-    Values = { "Linear", "Ease In", "Ease Out", "Snap", "Custom" },
-    Default = 1,
-    Callback = function(v)
-        if v ~= "Custom" then
-            AimCurve.SetPreset(v)
-            GraphInst:_Redraw()
-        end
-    end,
-})
-legitGroup:AddToggle("ShowAimGraph", { Text = "Show Aim Graph", Default = false, Callback = function(v) GraphInst:SetVisible(v) end })
 
 local triggerGroup = Tabs.Rage:AddRightGroupbox("Triggerbot")
 triggerGroup:AddToggle("TriggerEnabled", {
@@ -2577,7 +2428,7 @@ worldGroup:AddToggle("WorldFog", { Text = "Fog", Default = false, Callback = fun
 worldGroup:AddSlider("WorldFogEnd", { Text = "Fog Distance", Default = 1000, Min = 50, Max = 5000, Rounding = 0, Callback = function(v) state.WorldFogEnd = v end })
 
 -- MISC
-local movGroup = Tabs.Misc:AddLeftGroupbox("Movement")
+local movGroup = Tabs.Movement:AddLeftGroupbox("Movement")
 movGroup:AddToggle("BhopEnabled", {
     Text = "Bunnyhop",
     Default = false,
@@ -2598,9 +2449,36 @@ movGroup:AddToggle("FlyEnabled", {
     end,
 })
 
-local weaponGroup = Tabs.Misc:AddLeftGroupbox("Weapons")
+local weaponGroup = Tabs.Weapons:AddLeftGroupbox("Weapons")
 weaponGroup:AddToggle("NoSpread", { Text = "No Spread", Default = false, Callback = function(v) state.NoSpread = v end })
 weaponGroup:AddToggle("NoRecoil", { Text = "No Recoil", Default = false, Callback = function(v) state.NoRecoil = v end })
+weaponGroup:AddButton({ Text = "Rescan spreads", Func = function() ExtrasInst.SpreadScanned = false end })
+
+local skinGroup = Tabs.Weapons:AddRightGroupbox("Skin Changer")
+skinGroup:AddDropdown("SkinWeapon", {
+    Text = "Weapon",
+    Values = SkinsInst:List(),
+    Default = 1,
+    Callback = function(v)
+        local list = SkinsInst:ListFor(v)
+        if Options.SkinName then Options.SkinName:Refresh(list, list[1]) end
+    end,
+})
+skinGroup:AddDropdown("SkinName", { Text = "Skin", Values = {}, Default = 1 })
+skinGroup:AddButton({
+    Text = "Apply skin",
+    Func = function()
+        local weapon = Options.SkinWeapon and Options.SkinWeapon.Value
+        local skin = Options.SkinName and Options.SkinName.Value
+        if not weapon or not skin then
+            notify("Skins", "Pick a weapon first")
+            return
+        end
+        local applied = SkinsInst:Apply(weapon, skin)
+        notify("Skins", skin .. " -> " .. weapon .. " (" .. applied .. " slots)")
+    end,
+})
+skinGroup:AddLabel("Changes your viewmodel skin only")
 
 local miscOther = Tabs.Misc:AddRightGroupbox("Other")
 miscOther:AddToggle("TextureBugEnabled", {
@@ -2613,7 +2491,7 @@ miscOther:AddToggle("TextureBugEnabled", {
 })
 
 -- Movement+ (techniques from Counter-Blox movement cheats)
-local moveExtra = Tabs.Misc:AddRightGroupbox("Movement+")
+local moveExtra = Tabs.Movement:AddRightGroupbox("Movement+")
 moveExtra:AddLabel("Noclip"):AddKeyPicker("NoclipBind", { Default = "V", Mode = "Hold", Text = "Noclip (hold)" })
 moveExtra:AddLabel("Airstuck"):AddKeyPicker("AirstuckBind", { Default = "C", Mode = "Hold", Text = "Airstuck (hold)" })
 moveExtra:AddLabel("Edgebug"):AddKeyPicker("EdgebugBind", { Default = "E", Mode = "Hold", Text = "Edgebug (hold)" })
@@ -2624,12 +2502,12 @@ moveExtra:AddToggle("AutoStrafe", { Text = "Auto Strafe", Default = false, Callb
 moveExtra:AddSlider("AirAccel", { Text = "Air Acceleration", Default = 2, Min = 0, Max = 6, Rounding = 1, Callback = function(v) ExtrasInst.AirAccel = v end })
 
 -- GAME
-local hitGroup = Tabs.Game:AddLeftGroupbox("Hit feedback")
+local hitGroup = Tabs.Misc:AddLeftGroupbox("Hit feedback")
 hitGroup:AddToggle("Hitmarker", { Text = "Hitmarker", Default = false, Callback = function(v) state.Hitmarker = v end })
 hitGroup:AddToggle("KillNotify", { Text = "Kill notifications", Default = false, Callback = function(v) state.KillNotify = v end })
 hitGroup:AddLabel("Driven by ReplicatedStorage.Events")
 
-local killGroup = Tabs.Game:AddRightGroupbox("Kill effects")
+local killGroup = Tabs.Misc:AddRightGroupbox("Kill effects")
 killGroup:AddToggle("KillEffect", {
     Text = "Enabled",
     Default = false,
@@ -2729,9 +2607,8 @@ pcall(function()
         Recon = ReconInst,
         Extras = ExtrasInst,
         World = WorldInst,
+        Skins = SkinsInst,
         Legitbot = LegitbotInst,
-        Graph = GraphInst,
-        AimCurve = AimCurve,
         Updater = Updater,
         Version = SCRIPT_VERSION,
         Game = GameInst,
